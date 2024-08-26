@@ -12,6 +12,8 @@ def check_open_ports(host, ports):
             open_ports.append(port)
         except (socket.timeout, ConnectionRefusedError):
             pass
+        except OSError as e:
+            print(f"Error checking port {port}: {e}")
     return open_ports
 
 def get_ssl_info(host, port=443):
@@ -21,22 +23,32 @@ def get_ssl_info(host, port=443):
             with context.wrap_socket(sock, server_hostname=host) as secure_sock:
                 cert = secure_sock.getpeercert()
                 return cert
-    except Exception:
+    except Exception as e:
+        print(f"Error getting SSL info: {e}")
         return None
 
 def check_http_headers(url):
     try:
         response = requests.head(url, timeout=5)
         return response.headers
-    except requests.RequestException:
+    except requests.RequestException as e:
+        print(f"Error checking {url}: {e}")
         return None
 
 def detect_proxy(host):
     print(f"Analyzing {host}...")
     
+    try:
+        # Resolve hostname to IP address
+        ip = socket.gethostbyname(host)
+        print(f"Resolved {host} to IP: {ip}")
+    except socket.gaierror as e:
+        print(f"Error resolving hostname: {e}")
+        return
+
     # Check common ports
     common_ports = [80, 443, 8080, 3128, 8443]
-    open_ports = check_open_ports(host, common_ports)
+    open_ports = check_open_ports(ip, common_ports)
     print(f"Open ports: {open_ports}")
     
     # Check SSL certificate (if applicable)
