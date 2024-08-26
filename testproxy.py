@@ -33,12 +33,12 @@ def check_http_headers(url):
 
 def detect_proxy(host):
     print(f"Analyzing {host}...")
-
+    
     # Check common ports
-    common_ports = [80, 443, 8080, 3128]
+    common_ports = [80, 443, 8080, 3128, 8443]
     open_ports = check_open_ports(host, common_ports)
     print(f"Open ports: {open_ports}")
-
+    
     # Check SSL certificate (if applicable)
     if 443 in open_ports:
         ssl_info = get_ssl_info(host)
@@ -49,24 +49,24 @@ def detect_proxy(host):
             print(f"  Version: {ssl_info.get('version')}")
         else:
             print("Unable to retrieve SSL information")
-
+    
     # Check HTTP headers
     http_url = f"http://{host}"
     https_url = f"https://{host}"
-
+    
     http_headers = check_http_headers(http_url)
     https_headers = check_http_headers(https_url)
-
+    
     if http_headers:
         print("\nHTTP Headers:")
         for key, value in http_headers.items():
             print(f"  {key}: {value}")
-
+    
     if https_headers:
         print("\nHTTPS Headers:")
         for key, value in https_headers.items():
             print(f"  {key}: {value}")
-
+    
     # Look for proxy/load balancer indicators
     proxy_indicators = [
         'X-Forwarded-For',
@@ -75,14 +75,48 @@ def detect_proxy(host):
         'X-Forwarded-Host',
         'X-Forwarded-Proto',
         'X-Load-Balancer',
-        'Proxy-Connection'
+        'Proxy-Connection',
+        'X-Proxy-ID',
+        'Forwarded',
+        'X-Forwarded-Server',
+        'X-Forwarded-Port',
+        'X-Original-URL',
+        'X-Rewrite-URL',
+        'X-Proxy-Cache',
+        'X-Cache',
+        'X-Cache-Lookup',
+        'X-Varnish',
+        'X-Azure-Ref',
+        'CF-RAY',  # Cloudflare
+        'X-Amzn-Trace-Id',  # Amazon Web Services
+        'X-Client-IP',
+        'X-Host',
+        'X-Forwarded-By',
+        'X-Originating-IP',
+        'X-Backend-Server',
+        'X-Served-By',
+        'X-Timer',  # Fastly
+        'Fastly-Debug-Digest',  # Fastly
+        'X-CDN',
+        'X-CDN-Provider',
+        'X-Edge-IP',
+        'X-Backend-Host',
+        'X-Proxy-Host',
+        'X-Akamai-Transformed',  # Akamai
+        'X-True-Client-IP',  # Akamai
+        'Fly-Request-ID',  # Fly.io
+        'Server-Timing',  # Can indicate CDN usage
+        'X-Cache-Hit',
+        'X-Cache-Status',
+        'X-Middleton-Response',
+        'X-Origin-Server'
     ]
-
+    
     found_indicators = []
     for header in proxy_indicators:
         if header.lower() in [h.lower() for h in (http_headers or {})] + [h.lower() for h in (https_headers or {})]:
             found_indicators.append(header)
-
+    
     if found_indicators:
         print(f"\nPotential proxy/load balancer detected. Indicators found: {', '.join(found_indicators)}")
     else:
