@@ -1,89 +1,149 @@
-# Test-Proxy
+# Advanced Proxy and WAF Detection Tool
 
-Welcome to the **test-proxy** project! This tool is designed to analyze potential proxy servers or load balancers by examining open ports, SSL certificates, and HTTP headers for any signs of proxy or load balancer indicators.
+Welcome to the **Advanced Proxy and WAF Detection Tool**! This powerful and flexible tool is designed to analyze potential proxy servers, load balancers, and Web Application Firewalls (WAFs) by examining open ports, SSL certificates, HTTP headers, and various other indicators.
 
 ## Overview
 
-The `test-proxy` script aims to detect proxies or load balancers by performing the following steps:
+This advanced script performs a comprehensive analysis of a target host, including:
 
-1. **Open Port Check**: Scans common proxy and load balancer ports (e.g., 80, 443, 8080, 3128, 8443) to determine if they are open.
-2. **SSL Certificate Retrieval**: If port 443 is open, the script retrieves and displays the SSL certificate details.
-3. **HTTP Header Inspection**: Sends HTTP `HEAD` requests to the target and inspects the headers for any proxy or load balancer indicators.
-4. **Proxy/Load Balancer Detection**: Analyzes HTTP headers to identify potential proxies or load balancers based on common header indicators.
+1. **Multi-threaded Port Scanning**: Rapidly scans common ports associated with proxies and load balancers.
+2. **SSL Certificate Analysis**: Retrieves detailed SSL certificate information for secure connections.
+3. **HTTP/HTTPS Header Inspection**: Sends requests to both HTTP and HTTPS endpoints and thoroughly examines the headers.
+4. **Proxy/Load Balancer Detection**: Analyzes headers for a wide range of proxy and load balancer indicators.
+5. **Web Application Firewall (WAF) Detection**: Identifies potential WAFs based on specific header signatures.
+6. **Redirect Chain Analysis**: Tracks and reports on HTTP and HTTPS redirect chains.
 
 ## Features
 
-- **Multi-threaded Port Scanning**: Quickly scans multiple ports using a thread pool to improve performance.
-- **SSL Certificate Analysis**: Retrieves SSL certificate details to help determine if the server is behind a proxy or load balancer.
-- **Comprehensive HTTP Header Checks**: Examines a wide range of HTTP headers to identify any signs of a proxy or load balancer.
-- **Flexible and Extensible**: Easily customizable to add more proxy/load balancer detection techniques.
+- **High-Performance Scanning**: Utilizes multi-threading for efficient port scanning and analysis.
+- **Comprehensive SSL Information**: Provides detailed SSL certificate data, including subject, issuer, validity dates, and more.
+- **Advanced HTTP(S) Header Analysis**: Examines a wide range of headers to detect proxies, load balancers, and WAFs.
+- **Flexible Output Options**: Supports both human-readable text and JSON output formats.
+- **Redirect Chain Tracking**: Follows and reports on HTTP and HTTPS redirects.
+- **WAF Detection**: Identifies common Web Application Firewalls based on specific headers.
+- **Verbose Logging**: Offers a detailed logging option for in-depth analysis and debugging.
+- **Results Summary**: Provides a concise summary of key findings at the end of the analysis.
 
 ## Requirements
 
-- Python 3.x
-- Required Python libraries: `socket`, `ssl`, `requests`
+- Python 3.6+
+- Required Python libraries: `requests`, `urllib3`, `cryptography`
 
-You can install the required libraries using:
+Install the required libraries using:
 
 ```bash
-pip install requests
+pip install requests urllib3 cryptography
 ```
 
 ## Usage
 
-Clone the repository and navigate into the project directory:
+Clone the repository and navigate to the project directory:
 
 ```bash
 git clone https://github.com/geeknik/test-proxy.git
 cd test-proxy
 ```
 
-Run the script by providing the target hostname or IP address:
+Run the script with various options:
 
-```bash
-python test-proxy.py
-```
+1. Basic usage:
+   ```
+   python testproxy.py example.com
+   ```
 
-You will be prompted to enter the IP address or hostname you want to analyze.
+2. JSON output:
+   ```
+   python testproxy.py example.com -o json
+   ```
+
+3. Save results to a file:
+   ```
+   python testproxy.py example.com -o json -f results.json
+   ```
+
+4. Verbose output:
+   ```
+   python testproxy.py example.com -v
+   ```
+
+## Command-line Arguments
+
+- `target`: The IP address or hostname to analyze (required)
+- `-o, --output`: Output format, either 'text' (default) or 'json'
+- `-f, --file`: Output file path to save results
+- `-v, --verbose`: Enable verbose output for detailed logging
 
 ## Example Output
 
 ```plaintext
-Enter the IP address or hostname to analyze: example.com
 Analyzing example.com...
 Resolved example.com to IP: 93.184.216.34
 Open ports: [80, 443]
+
 SSL certificate information:
-  Subject: ((('commonName', 'example.com'),),)
-  Issuer: ((('countryName', 'US'),), (('organizationName', 'DigiCert Inc'),), (('commonName', 'DigiCert SHA2 Secure Server CA'),))
-  Version: 3
+  subject: CN=example.com
+  issuer: C=US, O=DigiCert Inc, CN=DigiCert TLS RSA SHA256 2020 CA1
+  version: 3
+  not_valid_before: 2023-08-15 00:00:00
+  not_valid_after: 2024-09-14 23:59:59
+  serial_number: 12345678901234567890
+  signature_algorithm: sha256WithRSAEncryption
 
-HTTP Headers:
-  Server: ECS (dcb/7ECF)
-  Date: Sat, 30 Aug 2024 00:00:00 GMT
+HTTP Headers (Status: 200):
+  Accept-Ranges: bytes
+  Age: 590933
+  Cache-Control: max-age=604800
   Content-Type: text/html; charset=UTF-8
-  Content-Length: 1234
-  Connection: close
-
-HTTPS Headers:
-  Server: ECS (dcb/7ECF)
   Date: Sat, 30 Aug 2024 00:00:00 GMT
-  Content-Type: text/html; charset=UTF-8
-  Content-Length: 1234
-  Connection: close
+  Etag: "3147526947+ident"
+  Expires: Sat, 06 Sep 2024 00:00:00 GMT
+  Last-Modified: Thu, 28 Aug 2024 00:00:00 GMT
+  Server: ECS (dcb/7ECE)
+  Vary: Accept-Encoding
+  X-Cache: HIT
+  Content-Length: 1256
 
-Potential proxy/load balancer detected. Indicators found: X-Forwarded-For, X-Real-IP
+HTTPS Headers (Status: 200):
+  Accept-Ranges: bytes
+  Age: 590933
+  Cache-Control: max-age=604800
+  Content-Type: text/html; charset=UTF-8
+  Date: Sat, 30 Aug 2024 00:00:00 GMT
+  Etag: "3147526947+ident"
+  Expires: Sat, 06 Sep 2024 00:00:00 GMT
+  Last-Modified: Thu, 28 Aug 2024 00:00:00 GMT
+  Server: ECS (dcb/7ECE)
+  Vary: Accept-Encoding
+  X-Cache: HIT
+  Content-Length: 1256
+
+Potential proxy/load balancer detected. Indicators found: X-Cache
+No Web Application Firewall (WAF) detected
+
+Summary of findings:
+  Host: example.com
+  IP: 93.184.216.34
+  Open ports: [80, 443]
+  SSL certificate subject: CN=example.com
+  Proxy/load balancer indicators: X-Cache
+
+Analysis completed in 2.34 seconds.
 ```
 
 ## Contribution
 
-Contributions are welcome! If you have suggestions for improvements or want to report a bug, please open an issue or submit a pull request.
+We welcome contributions! If you have ideas for improvements, new features, or bug fixes, please open an issue or submit a pull request. Make sure to follow the existing code style and add tests for new functionality.
 
 ## License
 
-This project is licensed under the GPLv3 License. See the [LICENSE](LICENSE) file for more details.
+This project is licensed under the GPLv3 License. See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- Thanks to the [requests](https://docs.python-requests.org/en/latest/) library for making HTTP requests easy in Python.
-- Inspired by various cybersecurity and network security tools for proxy detection and network analysis.
+- Thanks to the `requests`, `urllib3`, and `cryptography` libraries for their powerful features.
+- Inspired by various cybersecurity tools and the need for comprehensive proxy and WAF detection.
+- Thanks to [cryptoscuttlebutt](https://github.com/cryptoscuttlebutt) for their contribution(s).
+
+## Disclaimer
+
+This tool is for educational and informational purposes only. Ensure you have permission before scanning any networks or systems you do not own or have explicit permission to test.
