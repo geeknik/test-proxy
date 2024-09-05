@@ -2,6 +2,12 @@ import socket
 import ssl
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib3
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def check_open_ports(host, ports):
     open_ports = []
@@ -19,17 +25,19 @@ def check_open_ports(host, ports):
 def get_ssl_info(host, port=443):
     try:
         context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
         with socket.create_connection((host, port)) as sock:
             with context.wrap_socket(sock, server_hostname=host) as secure_sock:
-                cert = secure_sock.getpeercert()
-                return cert
+                der_cert = secure_sock.getpeercert(binary_form=True)
+                return x509.load_der_x509_certificate(der_cert, default_backend())
     except Exception as e:
         print(f"Error getting SSL info: {e}")
         return None
 
 def check_http_headers(url):
     try:
-        response = requests.head(url, timeout=5)
+        response = requests.head(url, timeout=5, verify=False)
         return response.headers
     except requests.RequestException as e:
         print(f"Error checking {url}: {e}")
@@ -53,12 +61,14 @@ def detect_proxy(host):
     
     # Check SSL certificate (if applicable)
     if 443 in open_ports:
-        ssl_info = get_ssl_info(host)
-        if ssl_info:
+        cert = get_ssl_info(host)
+        if cert:
             print("SSL certificate information:")
-            print(f"  Subject: {ssl_info.get('subject')}")
-            print(f"  Issuer: {ssl_info.get('issuer')}")
-            print(f"  Version: {ssl_info.get('version')}")
+            print(f"  Subject: {cert.subject.rfc4514_string()}")
+            print(f"  Issuer: {cert.issuer.rfc4514_string()}")
+            print(f"  Version: {cert.version}")
+            print(f"  Not valid before: {cert.not_valid_before_utc}")
+            print(f"  Not valid after: {cert.not_valid_after_utc}")
         else:
             print("Unable to retrieve SSL information")
     
