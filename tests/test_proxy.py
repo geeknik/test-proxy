@@ -1,7 +1,7 @@
 import pytest
 import socket
 from unittest.mock import patch, MagicMock
-from test_proxy import check_open_ports, get_ssl_info, check_http_headers, detect_proxy
+from testproxy import check_open_ports, get_ssl_info, check_http_headers, detect_proxy
 
 # Mock host to use in tests
 MOCK_HOST = 'example.com'
