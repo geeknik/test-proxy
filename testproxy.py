@@ -113,8 +113,6 @@ def detect_waf(headers):
         'X-Firewall-ID': 'Generic Firewall (potential WAF)',
         'X-Security-Firewall': 'Security Firewall (potential WAF)',
         'X-WAF-Detected': 'Generic WAF',
-        'X-Cache-Status': 'Cache-Control (potential WAF)',
-        'Server-Timing': 'Server Timing (potential WAF)',
         
         # Legacy or lesser-known WAFs
         'X-BlockID': 'BlockDoS WAF',
