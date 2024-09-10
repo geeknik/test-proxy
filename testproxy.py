@@ -70,6 +70,7 @@ def check_http_headers(url):
 
 def detect_waf(headers):
     waf_indicators = {
+        # Generic and common WAF indicators
         'X-WAF-Rate-Limit': 'Generic WAF',
         'X-Powered-By-Plesk': 'Plesk WAF',
         'X-CDN': 'CDN WAF',
@@ -80,6 +81,51 @@ def detect_waf(headers):
         'X-Mod-Security': 'ModSecurity WAF',
         'X-AMP-Cache-HIT': 'AMP WAF',
         'X-Varnish': 'Varnish Cache (potential WAF)',
+
+        # CDN providers with WAF capabilities
+        'X-Cloudflare-CDN': 'Cloudflare WAF',
+        'X-Fastly-WAF': 'Fastly WAF',
+        'X-AWS-WAF-ID': 'AWS WAF',
+        'X-Google-Cache-Status': 'Google Cloud Armor (WAF)',
+        'X-Azure-CDN-WAF': 'Azure WAF',
+
+        # Advanced and less common WAFs
+        'X-Barracuda-WAF': 'Barracuda WAF',
+        'X-Citrix-NS': 'Citrix Netscaler WAF',
+        'X-Imperva-ID': 'Imperva WAF',
+        'X-Fortinet-WAF': 'Fortinet WAF',
+        'X-PaloAlto-ID': 'Palo Alto WAF',
+        'X-Radware-WAF': 'Radware WAF',
+        'X-Denied-By-SonicWall': 'SonicWall WAF',
+        'X-Silverline-Request-ID': 'F5 Silverline WAF',
+        'X-F5-Edge-Request-ID': 'F5 Networks WAF',
+
+        # New and emerging WAFs and cache solutions with WAF integration
+        'X-Cloud-Proxy-ID': 'Cloud Proxy (potential WAF)',
+        'X-SiteLock-Request-ID': 'SiteLock WAF',
+        'X-StackPath-WAF-ID': 'StackPath WAF',
+        'X-Reblaze-WAF': 'Reblaze WAF',
+        'X-Armor-WAF': 'Armor WAF',
+        'X-PerimeterX-Client-ID': 'PerimeterX WAF',
+        'X-TrueShield': 'SiteGround TrueShield WAF',
+
+        # Security headers with potential WAF presence
+        'X-Firewall-ID': 'Generic Firewall (potential WAF)',
+        'X-Security-Firewall': 'Security Firewall (potential WAF)',
+        'X-WAF-Detected': 'Generic WAF',
+        'X-Cache-Status': 'Cache-Control (potential WAF)',
+        'Server-Timing': 'Server Timing (potential WAF)',
+        
+        # Legacy or lesser-known WAFs
+        'X-BlockID': 'BlockDoS WAF',
+        'X-DNS-Guard': 'DNS Guard WAF',
+        'X-CacheWall': 'CacheWall (potential WAF)',
+        'X-Shield-ID': 'ShieldSquare WAF',
+
+        # Miscellaneous WAFs
+        'X-SafeGuard': 'SafeGuard WAF',
+        'X-Request-Guard-ID': 'Request Guard (potential WAF)',
+        'X-WAF-Block-ID': 'Generic WAF',
     }
     
     detected_wafs = []
