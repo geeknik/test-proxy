@@ -1,7 +1,7 @@
 import pytest
 import socket
 from unittest.mock import patch, MagicMock
-from proxy_detector import check_open_ports, get_ssl_info, check_http_headers, detect_waf, detect_proxy
+from testproxy import check_open_ports, get_ssl_info, check_http_headers, detect_waf, detect_proxy
 
 # Mock host to use in tests
 MOCK_HOST = 'example.com'
@@ -22,12 +22,12 @@ def test_get_ssl_info():
     mock_cert.not_valid_after.strftime.return_value = "2024-01-01 00:00:00"
     mock_cert.serial_number = 12345678901234567890
     mock_cert.signature_algorithm_oid._name = "sha256WithRSAEncryption"
-    
+
     with patch('ssl.create_default_context'), \
          patch('socket.create_connection'), \
          patch('ssl.SSLSocket.getpeercert', return_value=mock_cert), \
          patch('cryptography.x509.load_der_x509_certificate', return_value=mock_cert):
-        
+
         ssl_info = get_ssl_info(MOCK_HOST)
         assert ssl_info['subject'] == "CN=example.com"
         assert ssl_info['issuer'] == "C=US,O=DigiCert Inc,CN=DigiCert SHA2 Secure Server CA"
@@ -43,14 +43,14 @@ def test_check_http_headers():
         'Content-Type': 'text/html; charset=UTF-8',
         'X-Forwarded-For': '10.0.0.1'
     }
-    
+
     with patch('requests.head') as mock_request:
         mock_response = MagicMock()
         mock_response.headers = mock_headers
         mock_response.status_code = 200
         mock_response.history = []
         mock_request.return_value = mock_response
-        
+
         headers, status_code, history = check_http_headers(f'http://{MOCK_HOST}')
         assert headers == mock_headers
         assert status_code == 200
@@ -99,19 +99,19 @@ def test_detect_proxy():
         'waf_detected': ['Generic WAF'],
         'redirects': []
     }
-    
+
     with patch('socket.gethostbyname', return_value='93.184.216.34'), \
-         patch('proxy_detector.check_open_ports', return_value=[80, 443]), \
-         patch('proxy_detector.get_ssl_info', return_value=mock_results['ssl_info']), \
-         patch('proxy_detector.check_http_headers', side_effect=[
+         patch('testproxy.check_open_ports', return_value=[80, 443]), \
+         patch('testproxy.get_ssl_info', return_value=mock_results['ssl_info']), \
+         patch('testproxy.check_http_headers', side_effect=[
              (mock_results['http_headers'], 200, []),
              (mock_results['https_headers'], 200, [])
          ]), \
-         patch('proxy_detector.detect_waf', return_value=['Generic WAF']):
-        
+         patch('testproxy.detect_waf', return_value=['Generic WAF']):
+
         results = detect_proxy(MOCK_HOST, 'json')
         assert isinstance(results, str)  # Ensure JSON string is returned
-        
+
         import json
         parsed_results = json.loads(results)
         assert parsed_results['host'] == MOCK_HOST
