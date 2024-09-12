@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import socket
 import ssl
 import requests
@@ -5,10 +7,14 @@ import logging
 import argparse
 import json
 import time
+import threading
+import asyncio
+import datetime
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import urllib3
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
+import urllib3
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -16,127 +22,153 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-def check_open_ports(host, ports):
-    open_ports = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_port = {executor.submit(is_port_open, host, port): port for port in ports}
-        for future in as_completed(future_to_port):
-            port = future_to_port[future]
-            try:
-                if future.result():
-                    open_ports.append(port)
-            except Exception as e:
-                logging.error(f"Error checking port {port}: {e}")
-    return open_ports
+# Semaphore for rate limiting
+rate_limit = threading.Semaphore(5)  # Allows 5 concurrent connections
 
-def is_port_open(host, port):
+# Load indicators from external files
+def load_indicators(file_path):
     try:
-        sock = socket.create_connection((host, port), timeout=2)
-        sock.close()
-        return True
-    except (socket.timeout, ConnectionRefusedError):
+        with open(file_path, 'r') as f:
+            indicators = [line.strip() for line in f if line.strip()]
+        return indicators
+    except Exception as e:
+        logging.error(f"Error loading indicators from {file_path}: {e}")
+        return []
+
+# Function to check if a port is open (supports IPv4 and IPv6)
+async def is_port_open(host, port):
+    try:
+        for res in socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            af, socktype, proto, canonname, sa = res
+            try:
+                coro = asyncio.open_connection(host=sa[0], port=sa[1], family=af)
+                reader, writer = await asyncio.wait_for(coro, timeout=2)
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+                continue
+        return False
+    except Exception as e:
+        logging.debug(f"Error in is_port_open for {host}:{port} - {e}")
         return False
 
+# Function to check open ports asynchronously
+async def check_open_ports(host, ports):
+    open_ports = []
+    tasks = [is_port_open(host, port) for port in ports]
+    results = await asyncio.gather(*tasks)
+    for port, is_open in zip(ports, results):
+        if is_open:
+            open_ports.append(port)
+    return open_ports
+
+# Function to get SSL/TLS information
 def get_ssl_info(host, port=443):
     try:
         context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        with socket.create_connection((host, port)) as sock:
-            with context.wrap_socket(sock, server_hostname=host) as secure_sock:
-                der_cert = secure_sock.getpeercert(binary_form=True)
-                cert = x509.load_der_x509_certificate(der_cert, default_backend())
-                return {
-                    'subject': cert.subject.rfc4514_string(),
-                    'issuer': cert.issuer.rfc4514_string(),
-                    'version': cert.version,
-                    'not_valid_before': cert.not_valid_before.strftime('%Y-%m-%d %H:%M:%S'),
-                    'not_valid_after': cert.not_valid_after.strftime('%Y-%m-%d %H:%M:%S'),
-                    'serial_number': cert.serial_number,
-                    'signature_algorithm': cert.signature_algorithm_oid._name,
-                }
+        conn = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=host)
+        conn.settimeout(5)
+        conn.connect((host, port))
+        ssl_info = conn.getpeercert()
+        cipher = conn.cipher()
+        protocol_version = conn.version()
+        # Get certificate details
+        der_cert = conn.getpeercert(binary_form=True)
+        cert = x509.load_der_x509_certificate(der_cert, default_backend())
+
+        # Use the new properties that return aware datetime objects
+        not_before = cert.not_valid_before_utc
+        not_after = cert.not_valid_after_utc
+
+        # Compare with current UTC time
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        is_valid = not_after > current_time
+
+        conn.close()
+        return {
+            'subject': cert.subject.rfc4514_string(),
+            'issuer': cert.issuer.rfc4514_string(),
+            'version': cert.version.name,
+            'not_valid_before': not_before.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'not_valid_after': not_after.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            'serial_number': str(cert.serial_number),
+            'signature_algorithm': cert.signature_algorithm_oid._name,
+            'cipher': cipher,
+            'protocol': protocol_version,
+            'is_valid': is_valid,
+        }
     except Exception as e:
-        logging.error(f"Error getting SSL info: {e}")
+        logging.error(f"Error getting SSL info for {host}:{port} - {e}")
         return None
 
+# Function to perform banner grabbing
+def grab_banner(host, port):
+    try:
+        with rate_limit:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((host, port))
+            sock.sendall(b'HEAD / HTTP/1.1\r\nHost: %s\r\n\r\n' % host.encode())
+            banner = sock.recv(1024).decode().strip()
+            sock.close()
+            return banner
+    except Exception as e:
+        return None
+
+# Function to check HTTP headers
 def check_http_headers(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.head(url, headers=headers, timeout=5, verify=False, allow_redirects=True)
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/91.0.4472.124 Safari/537.36'
+            )
+        }
+        response = requests.head(
+            url,
+            headers=headers,
+            timeout=5,
+            verify=False,
+            allow_redirects=True
+        )
         return response.headers, response.status_code, response.history
     except requests.RequestException as e:
         logging.error(f"Error checking {url}: {e}")
         return None, None, None
 
-def detect_waf(headers):
-    waf_indicators = {
-        # Generic and common WAF indicators
-        'X-WAF-Rate-Limit': 'Generic WAF',
-        'X-Powered-By-Plesk': 'Plesk WAF',
-        'X-CDN': 'CDN WAF',
-        'cf-ray': 'Cloudflare WAF',
-        'X-Sucuri-ID': 'Sucuri WAF',
-        'X-Wx-Version': 'WatchGuard WAF',
-        'X-Akamai-WAF-Request': 'Akamai WAF',
-        'X-Mod-Security': 'ModSecurity WAF',
-        'X-AMP-Cache-HIT': 'AMP WAF',
-        'X-Varnish': 'Varnish Cache (potential WAF)',
-
-        # CDN providers with WAF capabilities
-        'X-Cloudflare-CDN': 'Cloudflare WAF',
-        'X-Fastly-WAF': 'Fastly WAF',
-        'X-AWS-WAF-ID': 'AWS WAF',
-        'X-Google-Cache-Status': 'Google Cloud Armor (WAF)',
-        'X-Azure-CDN-WAF': 'Azure WAF',
-
-        # Advanced and less common WAFs
-        'X-Barracuda-WAF': 'Barracuda WAF',
-        'X-Citrix-NS': 'Citrix Netscaler WAF',
-        'X-Imperva-ID': 'Imperva WAF',
-        'X-Fortinet-WAF': 'Fortinet WAF',
-        'X-PaloAlto-ID': 'Palo Alto WAF',
-        'X-Radware-WAF': 'Radware WAF',
-        'X-Denied-By-SonicWall': 'SonicWall WAF',
-        'X-Silverline-Request-ID': 'F5 Silverline WAF',
-        'X-F5-Edge-Request-ID': 'F5 Networks WAF',
-
-        # New and emerging WAFs and cache solutions with WAF integration
-        'X-Cloud-Proxy-ID': 'Cloud Proxy (potential WAF)',
-        'X-SiteLock-Request-ID': 'SiteLock WAF',
-        'X-StackPath-WAF-ID': 'StackPath WAF',
-        'X-Reblaze-WAF': 'Reblaze WAF',
-        'X-Armor-WAF': 'Armor WAF',
-        'X-PerimeterX-Client-ID': 'PerimeterX WAF',
-        'X-TrueShield': 'SiteGround TrueShield WAF',
-
-        # Security headers with potential WAF presence
-        'X-Firewall-ID': 'Generic Firewall (potential WAF)',
-        'X-Security-Firewall': 'Security Firewall (potential WAF)',
-        'X-WAF-Detected': 'Generic WAF',
-        
-        # Legacy or lesser-known WAFs
-        'X-BlockID': 'BlockDoS WAF',
-        'X-DNS-Guard': 'DNS Guard WAF',
-        'X-CacheWall': 'CacheWall (potential WAF)',
-        'X-Shield-ID': 'ShieldSquare WAF',
-
-        # Miscellaneous WAFs
-        'X-SafeGuard': 'SafeGuard WAF',
-        'X-Request-Guard-ID': 'Request Guard (potential WAF)',
-        'X-WAF-Block-ID': 'Generic WAF',
-    }
-    
+# Function to detect WAF based on headers
+def detect_waf(headers, waf_indicators):
     detected_wafs = []
     for header, waf in waf_indicators.items():
         if header.lower() in [h.lower() for h in headers]:
             detected_wafs.append(waf)
     return detected_wafs
 
-def detect_proxy(host, output_format='text'):
+# Function to get GeoIP information
+def get_geoip_info(ip):
+    try:
+        response = requests.get(f'https://geolocation-db.com/json/{ip}&position=true').json()
+        return {
+            'country': response.get('country_name'),
+            'state': response.get('state'),
+            'city': response.get('city'),
+            'latitude': response.get('latitude'),
+            'longitude': response.get('longitude'),
+        }
+    except Exception as e:
+        logging.error(f"Error getting GeoIP info: {e}")
+        return None
+
+# Main detection function
+async def detect_proxy(host, common_ports, proxy_indicators, waf_indicators):
     results = {
         'host': host,
         'ip': None,
+        'geoip': {},
         'open_ports': [],
+        'banners': {},
         'ssl_info': {},
         'http_headers': {},
         'https_headers': {},
@@ -144,9 +176,9 @@ def detect_proxy(host, output_format='text'):
         'waf_detected': [],
         'redirects': []
     }
-    
+
     logging.info(f"Analyzing {host}...")
-    
+
     try:
         ip = socket.gethostbyname(host)
         results['ip'] = ip
@@ -155,13 +187,25 @@ def detect_proxy(host, output_format='text'):
         logging.error(f"Error resolving hostname: {e}")
         return results
 
-    # Check common ports
-    common_ports = [80, 443, 8080, 3128, 8443, 8888, 8880, 8000, 9000, 9090]
-    open_ports = check_open_ports(ip, common_ports)
+    # Get GeoIP information
+    geoip_info = get_geoip_info(ip)
+    if geoip_info:
+        results['geoip'] = geoip_info
+        logging.info(f"Geolocation info: {geoip_info}")
+
+    # Check open ports
+    open_ports = await check_open_ports(ip, common_ports)
     results['open_ports'] = open_ports
     logging.info(f"Open ports: {open_ports}")
-    
-    # Check SSL certificate (if applicable)
+
+    # Perform banner grabbing
+    for port in open_ports:
+        banner = grab_banner(host, port)
+        if banner:
+            results['banners'][port] = banner
+            logging.info(f"Banner for port {port}: {banner}")
+
+    # Check SSL certificate (if port 443 is open)
     if 443 in open_ports:
         cert = get_ssl_info(host)
         if cert:
@@ -171,26 +215,26 @@ def detect_proxy(host, output_format='text'):
                 logging.info(f"  {key}: {value}")
         else:
             logging.info("Unable to retrieve SSL information")
-    
+
     # Check HTTP headers
     http_url = f"http://{host}"
     https_url = f"https://{host}"
-    
+
     http_headers, http_status, http_history = check_http_headers(http_url)
     https_headers, https_status, https_history = check_http_headers(https_url)
-    
+
     if http_headers:
         results['http_headers'] = dict(http_headers)
         logging.info(f"\nHTTP Headers (Status: {http_status}):")
         for key, value in http_headers.items():
             logging.info(f"  {key}: {value}")
-    
+
     if https_headers:
         results['https_headers'] = dict(https_headers)
         logging.info(f"\nHTTPS Headers (Status: {https_status}):")
         for key, value in https_headers.items():
             logging.info(f"  {key}: {value}")
-    
+
     # Check for redirects
     if http_history:
         results['redirects'].append({'protocol': 'http', 'chain': [r.url for r in http_history]})
@@ -200,65 +244,28 @@ def detect_proxy(host, output_format='text'):
         results['redirects'].append({'protocol': 'https', 'chain': [r.url for r in https_history]})
         logging.info("\nHTTPS Redirects:")
         logging.info(" -> ".join([r.url for r in https_history]))
-    
-    # Expanded and enhanced list for proxy/load balancer indicators
-    proxy_indicators = [
-    # Common Proxy Headers
-    'X-Forwarded-For', 'X-Real-IP', 'Via', 'X-Forwarded-Host', 'X-Forwarded-Proto',
-    'X-Load-Balancer', 'Proxy-Connection', 'X-Proxy-ID', 'Forwarded', 'X-Forwarded-Server',
-    'X-Forwarded-Port', 'X-Original-URL', 'X-Rewrite-URL', 'X-Proxy-Cache', 'X-Cache',
-    'X-Cache-Lookup', 'X-Varnish', 'X-Azure-Ref', 'CF-RAY', 'X-Amzn-Trace-Id',
-    'X-Client-IP', 'X-Host', 'X-Forwarded-By', 'X-Originating-IP', 'X-Backend-Server',
-    'X-Served-By', 'X-Timer', 'Fastly-Debug-Digest', 'X-CDN', 'X-CDN-Provider',
-    'X-Edge-IP', 'X-Backend-Host', 'X-Proxy-Host', 'X-Akamai-Transformed', 'X-True-Client-IP',
-    'Fly-Request-ID', 'Server-Timing', 'X-Cache-Hit', 'X-Cache-Status',
-    'X-Middleton-Response', 'X-Origin-Server',
 
-    # Emerging Proxy and CDN indicators
-    'X-Cloudflare-Visitor', 'X-Cloudtrace-Context', 'CF-Connecting-IP', 'X-Cloud-ID',
-    'X-Google-Forwarding', 'X-Forwarded-Scheme', 'X-Original-Host', 'X-Accel-Buffering',
-    'X-Fastly-Request-ID', 'X-Envoy-Internal', 'X-Edge-Request-ID', 'X-Edge-Cache',
-    'X-Proxy-Backend', 'True-Client-IP', 'X-Azure-FDID', 'X-Correlation-ID',
-
-    # VPN/Anonymity Indicators
-    'X-VPN-IP', 'X-Anon-Client-IP', 'X-Anonymous-Request-ID', 'X-Tor-Exit-Node', 'X-Proxy-User',
-    'X-Onion-Request', 'X-Tunnel-ID', 'X-VPN-Forwarded-For',
-
-    # Security Service Indicators
-    'X-Security-Proxy', 'X-Identity-Forwarded', 'X-WAF-Proxy', 'X-Security-Appliance',
-    'X-Security-Service-ID', 'X-WAF-Trace', 'X-DDoS-Request', 'X-Malware-Scan', 'X-Firewall-ID',
-    
-    # Mobile and IoT Proxy Indicators
-    'X-Mobile-Proxy', 'X-IoT-Forwarding', 'X-Mobile-Forwarded-For', 'X-MIOT-Device-ID', 
-    'X-Device-Proxy-ID', 'X-SIM-Proxy', 'X-Cellular-Forwarding', 'X-MMS-Forwarding',
-    
-    # CDN and Edge Compute Specific Indicators
-    'X-AWS-Edge-Trace', 'X-Edge-Lambda-Invoke', 'X-Compute-Region', 'X-Edge-Trace',
-    'X-CloudFront-Viewer-Country', 'X-CloudFront-Forwarded-Proto', 'X-CloudFront-Is-Desktop-Viewer',
-    'X-CloudFront-Is-Mobile-Viewer', 'X-CDN-Edge-ID', 'X-Cloudflare-Country',
-
-    # Additional Specialized Headers
-    'X-Balancer-Server', 'X-Load-Balancer-ID', 'X-CDN-Node-ID', 'X-Reverse-Proxy-ID',
-    'X-Nginx-Proxy', 'X-Heroku-Request-ID', 'X-CF-Connecting-IP', 'X-Proxy-IP-Chain',
-    'X-Cache-Request', 'X-Request-Cluster-ID', 'X-Gateway-Request-ID', 'X-Global-Trace-ID',
-    'X-Azure-CDN', 'X-Azure-Edge-Forwarded', 'X-Kubernetes-Service-Proxy', 'X-Cloudtrace-ID'
-    ]
-
-    
+    # Detect proxy indicators
     found_indicators = []
+    combined_headers = {}
+    if http_headers:
+        combined_headers.update(http_headers)
+    if https_headers:
+        combined_headers.update(https_headers)
+
     for header in proxy_indicators:
-        if header.lower() in [h.lower() for h in (http_headers or {})] + [h.lower() for h in (https_headers or {})]:
+        if header.lower() in [h.lower() for h in combined_headers]:
             found_indicators.append(header)
-    
+
     results['proxy_indicators'] = found_indicators
     if found_indicators:
         logging.info(f"\nPotential proxy/load balancer detected. Indicators found: {', '.join(found_indicators)}")
     else:
         logging.info("\nNo clear indicators of a proxy or load balancer were found.")
-    
+
     # Detect WAF
-    waf_http = detect_waf(http_headers or {})
-    waf_https = detect_waf(https_headers or {})
+    waf_http = detect_waf(http_headers or {}, waf_indicators)
+    waf_https = detect_waf(https_headers or {}, waf_indicators)
     results['waf_detected'] = list(set(waf_http + waf_https))
     if results['waf_detected']:
         logging.info(f"\nWAF detected: {', '.join(results['waf_detected'])}")
@@ -279,31 +286,116 @@ def detect_proxy(host, output_format='text'):
     if results['redirects']:
         logging.info(f"  Redirects detected: {len(results['redirects'])}")
 
-    if output_format == 'json':
-        return json.dumps(results, indent=2)
-    else:
-        return results
+    return results
 
+# Main function
 def main():
-    parser = argparse.ArgumentParser(description="Proxy and WAF Detection Tool")
-    parser.add_argument("target", help="IP address or hostname to analyze")
+    parser = argparse.ArgumentParser(
+        description="Proxy and WAF Detection Tool",
+        epilog=(
+            "Example usage:\n"
+            "  python testproxy.py -t example.com -o json -f results.json\n"
+            "  python testproxy.py -T targets.txt -p 80,443,8000-8100 -of csv -f output.csv"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-t", "--target", help="IP address or hostname to analyze")
+    group.add_argument("-T", "--target-file", help="File containing a list of targets")
+    parser.add_argument("-p", "--ports", help="Comma-separated list of ports or port ranges (e.g., 80,443,8000-8100)")
     parser.add_argument("-o", "--output", choices=['text', 'json'], default='text', help="Output format (default: text)")
+    parser.add_argument("-of", "--output-format", choices=['text', 'json', 'csv'], default='text', help="Output format")
     parser.add_argument("-f", "--file", help="Output file path")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("-l", "--log-level", choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO', help="Set the logging level (default: INFO)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output (equivalent to --log-level DEBUG)")
     args = parser.parse_args()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    else:
+        logging.getLogger().setLevel(getattr(logging, args.log_level))
+
+    # Load indicators
+    proxy_indicators = load_indicators('proxy_indicators.txt') or [
+        # Default proxy indicators if file is not found
+        'X-Forwarded-For', 'X-Real-IP', 'Via', 'X-Forwarded-Host', 'X-Forwarded-Proto',
+        # ... (other indicators as in previous examples)
+    ]
+    waf_indicators = {
+        # Default WAF indicators if file is not found
+        'X-WAF-Rate-Limit': 'Generic WAF',
+        'X-Powered-By-Plesk': 'Plesk WAF',
+        # ... (other indicators as in previous examples)
+    }
+
+    # Determine ports to scan
+    if args.ports:
+        ports = []
+        for part in args.ports.split(','):
+            if '-' in part:
+                start, end = map(int, part.split('-'))
+                ports.extend(range(start, end + 1))
+            else:
+                ports.append(int(part))
+        common_ports = ports
+    else:
+        common_ports = [80, 443, 8080, 3128, 8443, 8888, 8880, 8000, 9000, 9090]
+
+    # Determine targets to scan
+    if args.target_file:
+        try:
+            with open(args.target_file, 'r') as f:
+                targets = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            logging.error(f"Error reading target file: {e}")
+            return
+    else:
+        targets = [args.target]
 
     start_time = time.time()
-    results = detect_proxy(args.target, args.output)
+    all_results = []
+
+    # Run detection for each target
+    for target in targets:
+        loop = asyncio.get_event_loop()
+        results = loop.run_until_complete(
+            detect_proxy(target, common_ports, proxy_indicators, waf_indicators)
+        )
+        all_results.append(results)
+
     end_time = time.time()
 
-    if args.output == 'json':
-        output = results
-    else:
-        output = f"\nAnalysis completed in {end_time - start_time:.2f} seconds."
+    # Output results
+    if args.output_format == 'json':
+        output = json.dumps(all_results, indent=2)
+    elif args.output_format == 'csv':
+        # Flatten results for CSV output
+        keys = set()
+        for result in all_results:
+            keys.update(result.keys())
+        keys = sorted(keys)
 
+        # Write to CSV file or stdout
+        if args.file:
+            csvfile = open(args.file, 'w', newline='')
+        else:
+            csvfile = sys.stdout
+
+        writer = csv.DictWriter(csvfile, fieldnames=keys)
+        writer.writeheader()
+        for result in all_results:
+            writer.writerow(result)
+        if args.file:
+            csvfile.close()
+            logging.info(f"\nResults saved to {args.file}")
+        return
+    else:
+        # Text output
+        output = f"\nAnalysis completed in {end_time - start_time:.2f} seconds."
+        print(output)
+        return
+
+    # Save output to file if specified
     if args.file:
         with open(args.file, 'w') as f:
             f.write(output)
