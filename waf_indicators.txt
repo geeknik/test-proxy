@@ -64,3 +64,4 @@ X-Powered-By-Anquanbao:Anquanbao WAF
 X-Powered-By: ASP.NET:Microsoft ASP.NET WAF
 X-AspNet-Version:Microsoft ASP.NET WAF
 X-AspNetMvc-Version:Microsoft ASP.NET WAF
+x-akamai-transformed:Akamai WAF
