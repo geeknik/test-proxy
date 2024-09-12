@@ -1,41 +1,66 @@
-X-WAF-Rate-Limit:Generic WAF
-X-Powered-By-Plesk:Plesk WAF
-X-CDN:CDN WAF
-cf-ray:Cloudflare WAF
+CF-RAY:Cloudflare WAF
+Server: cloudflare:Cloudflare WAF
+CF-Cache-Status:Cloudflare WAF
+X-Cache:Cloudflare WAF
 X-Sucuri-ID:Sucuri WAF
-X-Wx-Version:WatchGuard WAF
-X-Akamai-WAF-Request:Akamai WAF
+Server: Sucuri/Cloudproxy:Sucuri WAF
+X-Akamai-Transformed:Akamai WAF
+X-Akamai-Session-Info:Akamai WAF
+X-Akamai-Edge-Stats:Akamai WAF
+X-Iinfo:Imperva Incapsula WAF
+X-CDN:Imperva Incapsula WAF
+X-Cnection: close:F5 BIG-IP APM
+Server: BigIP:F5 BIG-IP
+X-WA-Info:F5 BIG-IP ASM
 X-Mod-Security:ModSecurity WAF
-X-AMP-Cache-HIT:AMP WAF
-X-Varnish:Varnish Cache (potential WAF)
-X-Cloudflare-CDN:Cloudflare WAF
-X-Fastly-WAF:Fastly WAF
-X-AWS-WAF-ID:AWS WAF
-X-Google-Cache-Status:Google Cloud Armor (WAF)
-X-Azure-CDN-WAF:Azure WAF
-X-Barracuda-WAF:Barracuda WAF
-X-Citrix-NS:Citrix Netscaler WAF
-X-Imperva-ID:Imperva WAF
-X-Fortinet-WAF:Fortinet WAF
-X-PaloAlto-ID:Palo Alto WAF
-X-Radware-WAF:Radware WAF
+X-Mod-Security-Message:ModSecurity WAF
+Server: Mod_Security:ModSecurity WAF
+X-Reblaze-ID:Reblaze WAF
+X-Wallarm-Trace-ID:Wallarm WAF
+X-Powered-By-Plesk:Plesk WAF
 X-Denied-By-SonicWall:SonicWall WAF
-X-Silverline-Request-ID:F5 Silverline WAF
-X-F5-Edge-Request-ID:F5 Networks WAF
-X-Cloud-Proxy-ID:Cloud Proxy (potential WAF)
-X-SiteLock-Request-ID:SiteLock WAF
-X-StackPath-WAF-ID:StackPath WAF
-X-Reblaze-WAF:Reblaze WAF
-X-Armor-WAF:Armor WAF
-X-PerimeterX-Client-ID:PerimeterX WAF
-X-TrueShield:SiteGround TrueShield WAF
-X-Firewall-ID:Generic Firewall (potential WAF)
-X-Security-Firewall:Security Firewall (potential WAF)
-X-WAF-Detected:Generic WAF
-X-BlockID:BlockDoS WAF
-X-DNS-Guard:DNS Guard WAF
-X-CacheWall:CacheWall (potential WAF)
+Server: BarracudaNX:Barracuda WAF
 X-Shield-ID:ShieldSquare WAF
 X-SafeGuard:SafeGuard WAF
-X-Request-Guard-ID:Request Guard (potential WAF)
+X-Px-Block:PerimeterX WAF
+X-Px-Azd:PerimeterX WAF
+X-Px-Error:PerimeterX WAF
+X-PerimeterX:PerimeterX WAF
+X-SiteLock-Request-ID:SiteLock TrueShield WAF
+X-Azure-CDN:Azure Front Door WAF
+X-Azure-Ref:Azure Front Door WAF
+X-Azure-CDN-WAF:Azure Front Door WAF
+X-CDN:StackPath WAF
+X-Request-ID:Generic WAF
+X-Firewall-ID:Generic Firewall (potential WAF)
+X-Security-Firewall:Generic Firewall (potential WAF)
+X-WAF-Detected:Generic WAF
+X-WAF-Rate-Limit:Generic WAF
 X-WAF-Block-ID:Generic WAF
+X-Security-Policy:Generic WAF
+X-Download-Options:Generic WAF
+X-XSS-Protection:Generic WAF
+Server: Airlock:Airlock WAF
+Server: FortiWeb:Fortinet FortiWeb WAF
+Server: Profense:Profense WAF
+Server: Wallarm:Wallarm WAF
+Server: SecureSphere:Imperva SecureSphere WAF
+Server: CloudFront:Amazon AWS WAF
+X-Amz-Cf-Id:Amazon AWS WAF
+X-Amz-Cf-Pop:Amazon AWS WAF
+X-Amz-Cf-Error:Amazon AWS WAF
+X-CDN-Geo:EdgeCast WAF
+X-CDN-Geo-IP:EdgeCast WAF
+X-CDN-Geo-Country:EdgeCast WAF
+Server: ChinaCache:ChinaCache CDN (potential WAF)
+X-Edge-IP:CDN WAF
+X-Edge-Cache:CDN WAF
+X-Edge-Request-ID:CDN WAF
+X-FortifyIP:Fortify Web WAF
+X-MD5:Fortinet FortiWeb WAF
+X-JSN-STATUS:Juniper Networks WAF
+X-BlueCoat-Via:Blue Coat WAF
+X-Powered-By-Anquanbao:Anquanbao WAF
+X-Powered-By: ASP.NET:Microsoft ASP.NET WAF
+X-AspNet-Version:Microsoft ASP.NET WAF
+X-AspNetMvc-Version:Microsoft ASP.NET WAF
