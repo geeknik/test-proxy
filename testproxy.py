@@ -11,6 +11,7 @@ import threading
 import asyncio
 import datetime
 import csv
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
