@@ -39,7 +39,7 @@ This advanced script performs a comprehensive analysis of target hosts, includin
 
 ## Requirements
 
-- **Python 3.8+** (for optimal type hinting support)
+- **Python 3.10+** (for optimal type hinting support)
 - **Required Python libraries**:
   - `requests`
   - `urllib3`
