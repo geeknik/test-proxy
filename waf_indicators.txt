@@ -1,67 +1,133 @@
-CF-RAY:Cloudflare WAF
-Server: cloudflare:Cloudflare WAF
-CF-Cache-Status:Cloudflare WAF
-X-Cache:Cloudflare WAF
-X-Sucuri-ID:Sucuri WAF
-Server: Sucuri/Cloudproxy:Sucuri WAF
-X-Akamai-Transformed:Akamai WAF
-X-Akamai-Session-Info:Akamai WAF
-X-Akamai-Edge-Stats:Akamai WAF
-X-Iinfo:Imperva Incapsula WAF
-X-CDN:Imperva Incapsula WAF
-X-Cnection: close:F5 BIG-IP APM
-Server: BigIP:F5 BIG-IP
-X-WA-Info:F5 BIG-IP ASM
-X-Mod-Security:ModSecurity WAF
-X-Mod-Security-Message:ModSecurity WAF
-Server: Mod_Security:ModSecurity WAF
-X-Reblaze-ID:Reblaze WAF
-X-Wallarm-Trace-ID:Wallarm WAF
-X-Powered-By-Plesk:Plesk WAF
-X-Denied-By-SonicWall:SonicWall WAF
-Server: BarracudaNX:Barracuda WAF
-X-Shield-ID:ShieldSquare WAF
-X-SafeGuard:SafeGuard WAF
-X-Px-Block:PerimeterX WAF
-X-Px-Azd:PerimeterX WAF
-X-Px-Error:PerimeterX WAF
-X-PerimeterX:PerimeterX WAF
-X-SiteLock-Request-ID:SiteLock TrueShield WAF
-X-Azure-CDN:Azure Front Door WAF
-X-Azure-Ref:Azure Front Door WAF
-X-Azure-CDN-WAF:Azure Front Door WAF
-X-CDN:StackPath WAF
-X-Request-ID:Generic WAF
-X-Firewall-ID:Generic Firewall (potential WAF)
-X-Security-Firewall:Generic Firewall (potential WAF)
-X-WAF-Detected:Generic WAF
-X-WAF-Rate-Limit:Generic WAF
-X-WAF-Block-ID:Generic WAF
-X-Security-Policy:Generic WAF
-X-Download-Options:Generic WAF
-X-XSS-Protection:Generic WAF
-Server: Airlock:Airlock WAF
-Server: FortiWeb:Fortinet FortiWeb WAF
-Server: Profense:Profense WAF
-Server: Wallarm:Wallarm WAF
-Server: SecureSphere:Imperva SecureSphere WAF
-Server: CloudFront:Amazon AWS WAF
-X-Amz-Cf-Id:Amazon AWS WAF
-X-Amz-Cf-Pop:Amazon AWS WAF
-X-Amz-Cf-Error:Amazon AWS WAF
-X-CDN-Geo:EdgeCast WAF
-X-CDN-Geo-IP:EdgeCast WAF
-X-CDN-Geo-Country:EdgeCast WAF
-Server: ChinaCache:ChinaCache CDN (potential WAF)
-X-Edge-IP:CDN WAF
-X-Edge-Cache:CDN WAF
-X-Edge-Request-ID:CDN WAF
-X-FortifyIP:Fortify Web WAF
-X-MD5:Fortinet FortiWeb WAF
-X-JSN-STATUS:Juniper Networks WAF
-X-BlueCoat-Via:Blue Coat WAF
-X-Powered-By-Anquanbao:Anquanbao WAF
-X-Powered-By: ASP.NET:Microsoft ASP.NET WAF
-X-AspNet-Version:Microsoft ASP.NET WAF
-X-AspNetMvc-Version:Microsoft ASP.NET WAF
+# Cloudflare WAF Indicators
+cf-ray:Cloudflare WAF
+server:cloudflare:Cloudflare WAF
+cf-cache-status:Cloudflare WAF
+x-cache:Cloudflare WAF
+
+# Akamai WAF Indicators
 x-akamai-transformed:Akamai WAF
+x-akamai-session-info:Akamai WAF
+x-akamai-edge-stats:Akamai WAF
+
+# Sucuri WAF Indicators
+x-sucuri-id:Sucuri WAF
+server:sucuri/cloudproxy:Sucuri WAF
+
+# Imperva/Incapsula WAF Indicators
+x-iinfo:Imperva Incapsula WAF
+x-cdn:Imperva Incapsula WAF
+server:securesphere:Imperva SecureSphere WAF
+
+# F5 BIG-IP WAF Indicators
+x-cnection:close:F5 BIG-IP APM
+server:bigip:F5 BIG-IP
+x-wa-info:F5 BIG-IP ASM
+
+# ModSecurity WAF Indicators
+x-mod-security:ModSecurity WAF
+x-mod-security-message:ModSecurity WAF
+server:mod_security:ModSecurity WAF
+
+# Generic WAF Indicators
+x-waf-detected:Generic WAF
+x-waf-rate-limit:Generic WAF
+x-waf-block-id:Generic WAF
+x-request-id:Generic WAF
+x-firewall-id:Generic Firewall (potential WAF)
+x-security-firewall:Generic Firewall (potential WAF)
+x-security-policy:Generic WAF
+x-download-options:Generic WAF
+x-xss-protection:Generic WAF
+
+# Microsoft Azure WAF Indicators
+x-azure-cdn:Azure Front Door WAF
+x-azure-ref:Azure Front Door WAF
+x-azure-cdn-waf:Azure Front Door WAF
+server:frontdoor:Azure Front Door WAF
+
+# Amazon AWS WAF Indicators
+server:cloudfront:Amazon AWS WAF
+x-amz-cf-id:Amazon AWS WAF
+x-amz-cf-pop:Amazon AWS WAF
+x-amz-cf-error:Amazon AWS WAF
+
+# Microsoft ASP.NET WAF Indicators
+x-powered-by-plesk:Plesk WAF
+x-powered-by:asp.net:Microsoft ASP.NET WAF
+x-aspnet-version:Microsoft ASP.NET WAF
+x-aspnetmvc-version:Microsoft ASP.NET WAF
+
+# Other WAF Providers
+server:airlock:Airlock WAF
+server:fortiweb:Fortinet FortiWeb WAF
+server:profense:Profense WAF
+server:wallarm:Wallarm WAF
+server:barracudanx:Barracuda WAF
+x-shield-id:ShieldSquare WAF
+x-safeguard:SafeGuard WAF
+x-powermod:Sysdream EpiShield WAF
+x-protected-by:RSFirewall WAF
+x-denied-by-sonicwall:SonicWall WAF
+server:chinacache:ChinaCache CDN (potential WAF)
+x-fortifyip:Fortify Web WAF
+x-md5:Fortinet FortiWeb WAF
+x-jsn-status:Juniper Networks WAF
+x-bluecoat-via:Blue Coat WAF
+x-powered-by-anquanbao:Anquanbao WAF
+
+# PerimeterX WAF Indicators
+x-px-block:PerimeterX WAF
+x-px-azd:PerimeterX WAF
+x-px-error:PerimeterX WAF
+x-perimeterx:PerimeterX WAF
+
+# Other CDN/WAF Providers
+x-sitelock-request-id:SiteLock TrueShield WAF
+x-cdn:stackpath:StackPath WAF
+x-cdn-geo:EdgeCast WAF
+x-cdn-geo-ip:EdgeCast WAF
+x-cdn-geo-country:EdgeCast WAF
+x-edge-ip:CDN WAF
+x-edge-cache:CDN WAF
+x-edge-request-id:CDN WAF
+
+# Reblaze and Wallarm
+x-reblaze-id:Reblaze WAF
+x-wallarm-trace-id:Wallarm WAF
+
+# Additional Modern WAF Providers
+
+# Google Cloud Armor
+server:cloud-armor:Google Cloud Armor WAF
+x-google-cloud-armor:Google Cloud Armor WAF
+
+# Fastly WAF
+server:fastly:Fastly WAF
+x-served-by:cache-fastly:Fastly WAF
+x-cache-miss:fastly:Fastly WAF
+x-cache-hit:fastly:Fastly WAF
+
+# Cloudflare Additional Indicators
+cf-visitor:Cloudflare WAF
+x-cloudflare-visitor:Cloudflare WAF
+
+# AWS Additional Indicators
+x-amz-cf-redirect:Amazon AWS WAF
+x-amz-waf:Amazon AWS WAF
+x-amz-shield:Amazon AWS Shield Advanced WAF
+
+# Azure Additional Indicators
+x-azure-trace-id:Azure Front Door WAF
+x-frontdoor-backend-pool:Azure Front Door WAF
+
+# Additional Generic WAF Indicators
+x-waf-source:Generic WAF
+x-waf-rule-id:Generic WAF
+x-waf-country:Generic WAF
+x-waf-challenge:Generic WAF
+
+# CDN Indicators that can serve as WAF
+x-verizon-edge-cast:Verizon CDN WAF
+x-zscaler-protection:ZSscaler WAF
+x-managed-by:branchable:Branchable WAF
+x-varnish-cache:Varnish Cache WAF

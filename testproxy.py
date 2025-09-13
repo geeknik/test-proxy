@@ -201,6 +201,122 @@ def load_indicators(file_path: str) -> List[str]:
         logging.error(f"Error loading indicators from {file_path}: {e}")
         return []
 
+# Validate indicator file format
+def validate_indicator_file_format(file_path: str, format_type: str = 'proxy') -> bool:
+    """Validate the format of indicator files for basic integrity checks"""
+    if not os.path.exists(file_path):
+        return False
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            lines = content.split('\n')
+
+            # Check for basic structure
+            non_comment_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
+
+            if len(non_comment_lines) == 0:
+                logging.warning(f"Warning: {file_path} appears to be empty or contains only comments")
+                return False
+
+            # Validate WAF file format
+            if format_type == 'waf':
+                for line in non_comment_lines[:5]:  # Check first few lines for format
+                    line = line.strip()
+                    if ':' in line:
+                        parts = line.split(':')
+                        if len(parts) < 2:
+                            logging.warning(f"Warning: Invalid WAF indicator format in {file_path}: {line}")
+                            return False
+                    else:
+                        logging.warning(f"Warning: Missing ':' separator in WAF indicator: {line}")
+                        return False
+
+            # Validate proxy file format (should be simple lines)
+            elif format_type == 'proxy':
+                # Proxy indicators should be simple header names, not contain format specifications
+                for line in non_comment_lines[:5]:  # Check first few lines
+                    line = line.strip()
+                    if line.count(':') > 2:  # Too many colons, likely a WAF-style entry
+                        logging.warning(f"Warning: Proxy indicator file {file_path} contains WAF-style entries: {line}")
+                        logging.warning("Suggestion: Check that proxy and WAF indicator files are not swapped")
+                        return False
+
+        return True
+
+    except (IOError, UnicodeDecodeError) as e:
+        logging.error(f"Error validating {file_path}: {e}")
+        return False
+
+# Load WAF indicators from file with format "Header:Value:WAF_Name" or "Header:WAF_Name"
+def load_waf_indicators(file_path: str) -> Dict[str, str]:
+    """Load WAF indicators from file, handling multiple formats with validation"""
+    try:
+        if not validate_indicator_file_format(file_path, 'waf'):
+            logging.error(f"WAF indicators file validation failed: {file_path}")
+            return {}
+
+        waf_indicators = {}
+        parsed_lines = 0
+        invalid_lines = 0
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith('#'):  # Skip empty lines and comments
+                    continue
+
+                try:
+                    if ':' not in line:
+                        logging.warning(f"Line {line_num}: Missing ':' separator in WAF indicator: {line}")
+                        invalid_lines += 1
+                        continue
+
+                    # Handle different WAF indicator formats
+                    if line.count(':') == 1:
+                        # Simple format: "Header:WAF_Name"
+                        header_key, waf_name = line.split(':', 1)
+                        header_key = header_key.strip().lower()
+                        waf_name = waf_name.strip()
+                    elif line.count(':') >= 2:
+                        # Complex format: "Header:Value:WAF_Name" or similar
+                        if line.lower().startswith('server:'):
+                            # Handle "Server:Value:WAF_Name"
+                            parts = line.split(':')
+                            header_value = f"{parts[0].strip().lower()}:{parts[1].strip().lower()}".lower()
+                            waf_name = ':'.join(parts[2:]).strip()
+                        else:
+                            # Handle "Header:Value:WAF_Name"
+                            parts = line.split(':')
+                            header_value = ':'.join(parts[:-1]).strip().lower()
+                            waf_name = parts[-1].strip()
+                        header_key = header_value
+
+                    if header_key and waf_name:
+                        waf_indicators[header_key] = waf_name
+                        parsed_lines += 1
+                    else:
+                        logging.warning(f"Line {line_num}: Invalid WAF indicator format: {line}")
+                        invalid_lines += 1
+
+                except Exception as e:
+                    logging.warning(f"Line {line_num}: Error parsing WAF indicator '{line}': {e}")
+                    invalid_lines += 1
+                    continue
+
+        if parsed_lines == 0:
+            logging.error(f"No valid WAF indicators were parsed from {file_path}")
+            return {}
+
+        if invalid_lines > 0:
+            logging.warning(f"WAF indicators loading: {parsed_lines} valid lines, {invalid_lines} invalid lines")
+
+        return waf_indicators
+
+    except Exception as e:
+        logging.error(f"Error loading WAF indicators from {file_path}: {e}")
+        return {}
+
 # Function to check if a port is open (supports IPv4 and IPv6)
 async def is_port_open(host: str, port: int) -> bool:
     try:
@@ -547,13 +663,17 @@ def main():
     proxy_indicators = load_indicators('proxy_indicators.txt') or [
         # Default proxy indicators if file is not found
         'X-Forwarded-For', 'X-Real-IP', 'Via', 'X-Forwarded-Host', 'X-Forwarded-Proto',
-        # ... (other indicators as in previous examples)
+        'X-Load-Balancer', 'Proxy-Connection', 'X-Proxy-ID', 'Forwarded', 'X-Forwarded-Server'
     ]
-    waf_indicators = {
-        # Default WAF indicators if file is not found
-        'X-WAF-Rate-Limit': 'Generic WAF',
-        'X-Powered-By-Plesk': 'Plesk WAF',
-        # ... (other indicators as in previous examples)
+
+    # Load WAF indicators with proper parsing
+    waf_indicators = load_waf_indicators('waf_indicators.txt') or {
+        # Default WAF indicators if file is not found or fails to parse
+        'x-waf-rate-limit': 'Generic WAF',
+        'x-powered-by-plesk': 'Plesk WAF',
+        'server:cloudflare': 'Cloudflare WAF',
+        'server: bigip': 'F5 BIG-IP',
+        'x-waf-detected': 'Generic WAF'
     }
 
 
