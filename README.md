@@ -153,63 +153,33 @@ Run the script with various options:
 
 ```plaintext
 Analyzing www.mapbox.com...
-Resolved www.mapbox.com to IP: 151.101.40.143
-Geolocation info: {'country': 'United States', 'state': 'California', 'city': 'San Jose', 'latitude': 37.3388, 'longitude': -121.8914}
-Open ports: [80, 443]
-Banner for port 80: HTTP/1.1 301 Moved Permanently
-Connection: close
-Content-Length: 0
-Server: Varnish
-Retry-After: 0
-Location: https://www.mapbox.com/
-Accept-Ranges: bytes
-Date: Thu, 12 Sep 2024 21:16:32 GMT
-Via: 1.1 varnish
-X-Frame-Options: SAMEORIGIN
-X-Served-By: cache-sjc1000092-SJC
-X-Cache: HIT
-X-Cache-Hits: 0
-X-Timer: S1726175792.109140,VS0,VE1
-Cross-Origin-Opener-Policy: same-origin
-Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
-X-Content-Type-Options: nosniff
-X-Download-Options: noopen
-X-XSS-Protection: 1; mode=block
-SSL certificate information:
-  subject: CN=www.mapbox.com
-  issuer: CN=GlobalSign Atlas R3 DV TLS CA 2024 Q1,O=GlobalSign nv-sa,C=BE
-  version: v3
-  not_valid_before: 2024-04-03 22:50:29 UTC
-  not_valid_after: 2025-05-05 22:50:28 UTC
-  serial_number: 2025644571350465834010730283583934283
-  signature_algorithm: sha256WithRSAEncryption
-  cipher: ('ECDHE-RSA-CHACHA20-POLY1305', 'TLSv1.2', 256)
-  protocol: TLSv1.2
-  is_valid: True
+Resolved www.mapbox.com to IP: 146.75.104.143
+Geolocation info: {'country': 'Sweden', 'state': None, 'city': None, 'latitude': 59.3247, 'longitude': 18.056}
+Open ports: []
 
 HTTP Headers (Status: 200):
   Connection: keep-alive
   Content-Type: text/html
-  CF-Ray: 8c22eb4d9aa1ce9c-SJC
+  Content-Encoding: gzip
+  CF-Ray: 97e96c3e8c00f07a-DFW
   CF-Cache-Status: DYNAMIC
-  Age: 261818
+  Age: 74245
   Content-Language: en
-  Link: <https://www.mapbox.com/>; rel="canonical"
+  Link: <https://www.mapbox.com>; rel="canonical"
   content-security-policy: frame-ancestors 'self'
   processed-by: Weglot
-  Weglot: id.8c22eb4d9aa1ce9c, p.cf
+  Weglot: id.97e96c3e8c00f07a, p.cf, cs
   weglot-translated: true
-  x-lambda-id: 7293962f-1695-47b7-a9ad-62a23d5a3360
+  x-lambda-id: e3b8133e-4123-4b1d-8685-e9c5ed9ce63d
   Server: cloudflare
-  Content-Encoding: gzip
   Accept-Ranges: bytes
-  Date: Thu, 12 Sep 2024 21:16:32 GMT
+  Date: Sat, 13 Sep 2025 17:39:14 GMT
   Via: 1.1 varnish
   X-Frame-Options: SAMEORIGIN
-  X-Served-By: cache-sjc1000110-SJC, cache-sjc1000094-SJC
+  X-Served-By: cache-dfw-kdfw8210095-DFW, cache-dfw-kdfw8210066-DFW
   X-Cache: HIT, MISS
-  X-Cache-Hits: 8, 0
-  X-Timer: S1726175792.243911,VS0,VE132
+  X-Cache-Hits: 2, 0
+  X-Timer: S1757785154.316774,VS0,VE164
   Vary: x-wf-forwarded-proto, Accept-Encoding
   Cross-Origin-Opener-Policy: same-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
@@ -220,26 +190,26 @@ HTTP Headers (Status: 200):
 HTTPS Headers (Status: 200):
   Connection: keep-alive
   Content-Type: text/html
-  CF-Ray: 8c22eb4ebd17d025-SJC
+  Content-Encoding: gzip
+  CF-Ray: 97e96c40ff096a08-DFW
   CF-Cache-Status: DYNAMIC
-  Age: 261819
+  Age: 74245
   Content-Language: en
-  Link: <https://www.mapbox.com/>; rel="canonical"
+  Link: <https://www.mapbox.com>; rel="canonical"
   content-security-policy: frame-ancestors 'self'
   processed-by: Weglot
-  Weglot: id.8c22eb4ebd17d025, p.cf, cs
+  Weglot: id.97e96c40ff096a08, p.cf, cs
   weglot-translated: true
-  x-lambda-id: 7293962f-1695-47b7-a9ad-62a23d5a3360
+  x-lambda-id: e3b8133e-4123-4b1d-8685-e9c5ed9ce63d
   Server: cloudflare
-  Content-Encoding: gzip
   Accept-Ranges: bytes
-  Date: Thu, 12 Sep 2024 21:16:32 GMT
+  Date: Sat, 13 Sep 2025 17:39:14 GMT
   Via: 1.1 varnish
   X-Frame-Options: SAMEORIGIN
-  X-Served-By: cache-sjc10074-SJC, cache-sjc1000136-SJC
+  X-Served-By: cache-dfw-kdfw8210029-DFW, cache-dfw-kdfw8210167-DFW
   X-Cache: HIT, MISS
-  X-Cache-Hits: 31, 0
-  X-Timer: S1726175792.429858,VS0,VE159
+  X-Cache-Hits: 0, 0
+  X-Timer: S1757785155.700663,VS0,VE109
   Vary: x-wf-forwarded-proto, Accept-Encoding
   Cross-Origin-Opener-Policy: same-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
@@ -250,19 +220,19 @@ HTTPS Headers (Status: 200):
 HTTP Redirects:
 http://www.mapbox.com/
 
-Potential proxy/load balancer detected. Indicators found: Via, X-Cache, CF-RAY, X-Served-By, X-Timer
+Potential proxy/load balancer detected. Indicators found: Via, CF-RAY, X-Served-By, X-Cache, X-Timer, X-Cache
 
-No Web Application Firewall (WAF) detected
+WAF detected: Generic WAF, Cloudflare WAF
 
 Summary of findings:
   Host: www.mapbox.com
-  IP: 151.101.40.143
-  Open ports: [80, 443]
-  SSL certificate subject: CN=www.mapbox.com
-  Proxy/load balancer indicators: Via, X-Cache, CF-RAY, X-Served-By, X-Timer
+  IP: 146.75.104.143
+  Open ports: []
+  Proxy/load balancer indicators: Via, CF-RAY, X-Served-By, X-Cache, X-Timer, X-Cache
+  WAF detected: Generic WAF, Cloudflare WAF
   Redirects detected: 1
 
-Analysis completed in 3.18 seconds.
+Analysis completed in 7.89 seconds.
 ```
 
 ## Security Features
