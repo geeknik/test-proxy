@@ -21,11 +21,12 @@ This advanced script performs a comprehensive analysis of target hosts, includin
 
 - **High-Performance Asynchronous Scanning**: Utilizes `asyncio` for efficient port scanning and analysis.
 - **IPv4 and IPv6 Support**: Capable of analyzing both IPv4 and IPv6 addresses.
-- **Rate Limiting**: Implements rate limiting to prevent overwhelming target servers.
-- **Custom Port Ranges**: Allows users to specify custom port ranges or additional common ports.
-- **Comprehensive SSL/TLS Information**: Provides detailed SSL/TLS certificate data, including cipher suites, protocol versions, and certificate validity.
+- **Advanced Rate Limiting**: Implements configurable rate limiting to prevent overwhelming target servers (1-100 concurrent connections).
+- **Custom Port Ranges**: Allows users to specify custom port ranges or additional common ports with comprehensive validation.
+- **Secure SSL/TLS Analysis**: Provides detailed SSL/TLS certificate data with optional strict verification to detect certificate issues.
+- **Advanced Input Validation**: Comprehensive security validation for hostnames, ports, and file paths to prevent injection attacks.
 - **Advanced HTTP(S) Header Analysis**: Examines a wide range of headers to detect proxies, load balancers, and WAFs, with dynamic lists.
-- **Banner Grabbing**: Retrieves service banners to identify running services on open ports.
+- **Banner Grabbing**: Retrieves service banners to identify running services on open ports with rate limiting.
 - **Flexible Output Options**: Supports text, JSON, and CSV output formats.
 - **Redirect Chain Tracking**: Follows and reports on HTTP and HTTPS redirects.
 - **WAF Detection**: Identifies common Web Application Firewalls based on specific headers, with dynamic lists.
@@ -34,6 +35,7 @@ This advanced script performs a comprehensive analysis of target hosts, includin
 - **GeoIP Lookup**: Provides geolocation information for target IP addresses.
 - **Modular Design**: Code is organized into functions and modules for better readability and maintainability.
 - **Dynamic Indicator Lists**: Loads proxy and WAF indicators from external files for easy updates.
+- **Security Hardening**: Built-in protection against common security vulnerabilities including directory traversal and DoS attacks.
 
 ## Requirements
 
@@ -139,6 +141,9 @@ Run the script with various options:
 - `-f, --file`: Output file path to save results.
 - `-l, --log-level`: Set the logging level, choices are 'DEBUG', 'INFO', 'WARNING', 'ERROR' (default: 'INFO').
 - `-v, --verbose`: Enable verbose output (equivalent to `--log-level DEBUG`).
+- `--verify-ssl`: Enable SSL certificate verification (default: disabled).
+- `--rate-limit`: Maximum concurrent connections (default: 5, range: 1-100).
+- `--rate-window`: Rate limiting time window in seconds (default: 1.0).
 - `-h, --help`: Show help message and exit.
 
 **Note**: You must specify either `-t/--target` or `-T/--target-file`.
@@ -258,6 +263,53 @@ Summary of findings:
 
 Analysis completed in 3.18 seconds.
 ```
+
+## Security Features
+
+This tool includes comprehensive security hardening to protect against common vulnerabilities and ensure safe scanning:
+
+### Input Validation & Sanitization
+- **Hostname Validation**: Prevents malicious hostnames, blocks localhost/private IPs (127.0.0.1, ::1), validates IP formats, and checks IDNA encoding
+- **Port Security**: Restricts to valid port ranges (1-65535), prevents oversized ranges, blocks duplicates, and limits range sizes to 1000 ports
+- **File Path Protection**: Prevents directory traversal attacks, validates path lengths, and resolves symbolic links safely
+
+### Advanced Rate Limiting
+- **Configurable Concurrency**: Set maximum concurrent connections (1-100) using `--rate-limit`
+- **Sliding Window Control**: Adjust time window for rate limiting using `--rate-window` (default: 1.0 seconds)
+- **Thread-Safe Implementation**: Uses advanced rate limiting class with proper locking mechanisms
+- **DOS Protection**: Built-in protection against resource exhaustion through controlled concurrent operations
+
+### SSL/TLS Security
+- **Selective SSL Verification**: Enable/disable SSL certificate verification with `--verify-ssl` flag
+- **Enhanced Error Reporting**: Differentiates between SSL verification failures and connection errors
+- **Certificate Analysis**: Maintains full SSL/TLS certificate information with optional strict validation
+
+### Security Hardening
+- **Resource Limits**: Prevents DoS through input size restrictions (1000 char ports, 50 max port ranges)
+- **Memory Protection**: Bounded buffer sizes and controlled memory usage
+- **Injection Prevention**: Multiple layers of input validation to prevent command injection
+- **DNS Rebinding Protection**: Hostname validation prevents DNS rebinding attacks
+
+### Usage Examples with Security Options
+
+```bash
+# Enable SSL verification for production scanning
+python testproxy.py -t example.com --verify-ssl
+
+# Custom rate limiting for large-scale scanning
+python testproxy.py -t example.com --rate-limit 20 --rate-window 2.0
+
+# Secure scanning with combined security options
+python testproxy.py -t example.com --verify-ssl --rate-limit 10 --rate-window 1.5 -v
+```
+
+### Best Practices for Security
+
+1. **Always use `--verify-ssl`** in production environments
+2. **Adjust rate limiting** based on network capacity and target tolerance
+3. **Validate inputs** - the tool provides extensive built-in validation
+4. **Use appropriate logging levels** - avoid verbose output in sensitive environments
+5. **Keep dependencies updated** - security updates for cryptography libraries are crucial
 
 ## Dynamic Indicator Lists
 

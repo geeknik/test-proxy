@@ -13,6 +13,9 @@ import datetime
 import csv
 import sys
 import urllib3
+import re
+import ipaddress
+import os
 from typing import Dict, List, Optional, Union, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography import x509
@@ -35,6 +38,158 @@ MAX_TIMEOUT: float = 30.0
 DEFAULT_BANNER_TIMEOUT: int = 2
 DEFAULT_HTTP_TIMEOUT: int = 5
 DEFAULT_HTTPS_TIMEOUT: int = 5
+
+# Security-related constants
+VALID_HOSTNAME_REGEX = re.compile(r'^[a-zA-Z0-9\-_\.]+$')
+VALID_IP_REGEX = re.compile(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
+VALID_PORT_RANGE = range(1, 65536)
+VALID_FILE_PATH_MAX_LENGTH = 4096
+MAX_PORT_RANGES = 50
+
+# Input validation and sanitization functions
+def validate_hostname(hostname: str) -> bool:
+    """Validate hostname for security"""
+    if not hostname or len(hostname) > 253:  # RFC 1035 limit
+        return False
+
+    # Check for valid hostname format
+    if not VALID_HOSTNAME_REGEX.match(hostname):
+        return False
+
+    # Prevent localhost/private addresses
+    private_hosts = ['localhost', '127.0.0.1', '::1']
+    if hostname.lower() in private_hosts:
+        return False
+
+    # Try to validate as IP if it looks like one
+    if VALID_IP_REGEX.match(hostname):
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            return False
+
+    # Additional validation for hostname format
+    try:
+        # Check if the hostname can be encoded properly
+        hostname.encode('idna').decode('utf-8')
+        return True
+    except (UnicodeError, UnicodeDecodeError):
+        return False
+
+def validate_port(port: int) -> bool:
+    """Validate port number for security"""
+    return port in VALID_PORT_RANGE
+
+def validate_ports_list(ports_string: str) -> Tuple[bool, List[int]]:
+    """Validate and parse comma-separated port ranges"""
+    if len(ports_string) > 1000:  # Prevent DoS with large inputs
+        return False, []
+
+    ports = []
+    seen_ports = set()
+
+    try:
+        parts = ports_string.split(',')
+        if len(parts) > MAX_PORT_RANGES:
+            return False, []
+
+        for part in parts:
+            part = part.strip()
+            if '-' in part:
+                try:
+                    start_str, end_str = part.split('-')
+                    start, end = int(start_str), int(end_str)
+                    if not all(validate_port(x) for x in [start, end]):
+                        return False, []
+                    if start > end or (end - start) > 1000:  # Prevent large ranges
+                        return False, []
+                    for p in range(start, end + 1):
+                        if p not in seen_ports:
+                            ports.append(p)
+                            seen_ports.add(p)
+                except (ValueError, IndexError):
+                    return False, []
+            else:
+                try:
+                    port = int(part)
+                    if not validate_port(port) or port in seen_ports:
+                        return False, []
+                    ports.append(port)
+                    seen_ports.add(port)
+                except ValueError:
+                    return False, []
+
+    except Exception:
+        return False, []
+
+    return True, ports
+
+def sanitize_file_path(file_path: str) -> Optional[str]:
+    """Sanitize file path to prevent directory traversal"""
+    if not file_path or len(file_path) > VALID_FILE_PATH_MAX_LENGTH:
+        return None
+
+    # Expand path and resolve any symbolic links
+    try:
+        expanded = os.path.expanduser(file_path)
+        resolved = os.path.abspath(expanded)
+        # Check if path is still within acceptable bounds
+        if '..' in resolved or not resolved.startswith(os.getcwd() if not os.path.isabs(expanded) else '/'):
+            return None
+        return resolved
+    except (OSError, ValueError):
+        return None
+
+def secure_headers_check(url: str, verify_ssl: bool = True) -> Tuple[Optional[requests.structures.CaseInsensitiveDict], Optional[int], Optional[List[requests.Response]]]:
+    """Secure version of HTTP headers check with SSL verification"""
+    try:
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/91.0.4472.124 Safari/537.36'
+            )
+        }
+        response = requests.head(
+            url,
+            headers=headers,
+            timeout=DEFAULT_HTTP_TIMEOUT,
+            verify=verify_ssl,
+            allow_redirects=True
+        )
+        return response.headers, response.status_code, response.history
+    except requests.RequestException as e:
+        logging.warning(f"Error checking {url}: HTTP request failed ({'SSL verification' if 'certificate verify failed' in str(e) else 'connection error'})")
+        return None, None, None
+
+# Advanced rate limiting class
+class AdvancedRateLimiter:
+    def __init__(self, max_requests: int = 5, time_window: float = 1.0):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = []
+        self.lock = threading.Lock()
+
+    def acquire(self) -> bool:
+        """Acquire permission to make a request"""
+        with self.lock:
+            now = time.time()
+            # Remove requests outside the time window
+            self.requests = [req for req in self.requests if now - req < self.time_window]
+
+            if len(self.requests) < self.max_requests:
+                self.requests.append(now)
+                return True
+            return False
+
+    def __enter__(self):
+        # Simple wait-based acquisition
+        while not self.acquire():
+            time.sleep(0.1)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
 
 # Load indicators from external files
 def load_indicators(file_path: str) -> List[str]:
@@ -190,7 +345,7 @@ def get_geoip_info(ip: str) -> Optional[Dict[str, Union[str, float, None]]]:
         return None
 
 # Main detection function
-async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: List[str], waf_indicators: Dict[str, str]) -> Dict[str, Union[str, None, Dict[str, Any], List[Any]]]:
+async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: List[str], waf_indicators: Dict[str, str], verify_ssl: bool = False) -> Dict[str, Union[str, None, Dict[str, Any], List[Any]]]:
     results = {
         'host': host,
         'ip': None,
@@ -256,8 +411,8 @@ async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: Lis
     http_url = f"http://{host}"
     https_url = f"https://{host}"
 
-    http_headers, http_status, http_history = check_http_headers(http_url)
-    https_headers, https_status, https_history = check_http_headers(https_url)
+    http_headers, http_status, http_history = secure_headers_check(http_url, verify_ssl)
+    https_headers, https_status, https_history = secure_headers_check(https_url, verify_ssl)
 
     if http_headers:
         results['http_headers'] = dict(http_headers)
@@ -344,12 +499,49 @@ def main():
     parser.add_argument("-f", "--file", help="Output file path")
     parser.add_argument("-l", "--log-level", choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO', help="Set the logging level (default: INFO)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output (equivalent to --log-level DEBUG)")
+    parser.add_argument("--verify-ssl", action="store_true", help="Enable SSL certificate verification (default: disabled)")
+    parser.add_argument("--rate-limit", type=int, default=5, help="Maximum concurrent connections (default: 5)")
+    parser.add_argument("--rate-window", type=float, default=1.0, help="Rate limiting time window in seconds (default: 1.0)")
     args = parser.parse_args()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     else:
         logging.getLogger().setLevel(getattr(logging, args.log_level))
+
+    # Validate inputs for security
+    if args.target:
+        if not validate_hostname(args.target):
+            logging.error(f"Invalid hostname or IP address: {args.target}")
+            return
+
+    if args.target_file:
+        sanitized_path = sanitize_file_path(args.target_file)
+        if not sanitized_path:
+            logging.error(f"Invalid file path: {args.target_file}")
+            return
+        args.target_file = sanitized_path
+
+    # Validate ports if provided
+    if args.ports:
+        valid, port_list = validate_ports_list(args.ports)
+        if not valid:
+            logging.error(f"Invalid port specification: {args.ports}")
+            return
+        common_ports = port_list
+    else:
+        common_ports = [80, 443, 8080, 3128, 8443, 8888, 8880, 8000, 9000, 9090]
+
+    # Set up global rate limiting
+    if args.rate_limit < 1 or args.rate_limit > 100:
+        logging.error("Rate limit must be between 1 and 100")
+        return
+
+    global rate_limit
+    rate_limit = AdvancedRateLimiter(
+        max_requests=args.rate_limit,
+        time_window=args.rate_window
+    )
 
     # Load indicators
     proxy_indicators = load_indicators('proxy_indicators.txt') or [
@@ -364,18 +556,7 @@ def main():
         # ... (other indicators as in previous examples)
     }
 
-    # Determine ports to scan
-    if args.ports:
-        ports = []
-        for part in args.ports.split(','):
-            if '-' in part:
-                start, end = map(int, part.split('-'))
-                ports.extend(range(start, end + 1))
-            else:
-                ports.append(int(part))
-        common_ports = ports
-    else:
-        common_ports = [80, 443, 8080, 3128, 8443, 8888, 8880, 8000, 9000, 9090]
+
 
     # Determine targets to scan
     if args.target_file:
@@ -395,7 +576,7 @@ def main():
     for target in targets:
         loop = asyncio.get_event_loop()
         results = loop.run_until_complete(
-            detect_proxy(target, common_ports, proxy_indicators, waf_indicators)
+            detect_proxy(target, common_ports, proxy_indicators, waf_indicators, args.verify_ssl)
         )
         all_results.append(results)
 
