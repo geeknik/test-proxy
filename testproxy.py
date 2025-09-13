@@ -12,10 +12,11 @@ import asyncio
 import datetime
 import csv
 import sys
+import urllib3
+from typing import Dict, List, Optional, Union, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-import urllib3
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -26,8 +27,17 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 # Semaphore for rate limiting
 rate_limit = threading.Semaphore(5)  # Allows 5 concurrent connections
 
+# Default configuration constants
+DEFAULT_CONCURRENT_CONNECTIONS: int = 5
+DEFAULT_SCAN_TIMEOUT: float = 2.0
+MIN_TIMEOUT: float = 1.0
+MAX_TIMEOUT: float = 30.0
+DEFAULT_BANNER_TIMEOUT: int = 2
+DEFAULT_HTTP_TIMEOUT: int = 5
+DEFAULT_HTTPS_TIMEOUT: int = 5
+
 # Load indicators from external files
-def load_indicators(file_path):
+def load_indicators(file_path: str) -> List[str]:
     try:
         with open(file_path, 'r') as f:
             indicators = [line.strip() for line in f if line.strip()]
@@ -37,13 +47,13 @@ def load_indicators(file_path):
         return []
 
 # Function to check if a port is open (supports IPv4 and IPv6)
-async def is_port_open(host, port):
+async def is_port_open(host: str, port: int) -> bool:
     try:
         for res in socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM):
             af, socktype, proto, canonname, sa = res
             try:
                 coro = asyncio.open_connection(host=sa[0], port=sa[1], family=af)
-                reader, writer = await asyncio.wait_for(coro, timeout=2)
+                reader, writer = await asyncio.wait_for(coro, timeout=DEFAULT_SCAN_TIMEOUT)
                 writer.close()
                 await writer.wait_closed()
                 return True
@@ -55,7 +65,7 @@ async def is_port_open(host, port):
         return False
 
 # Function to check open ports asynchronously
-async def check_open_ports(host, ports):
+async def check_open_ports(host: str, ports: List[int]) -> List[int]:
     open_ports = []
     tasks = [is_port_open(host, port) for port in ports]
     results = await asyncio.gather(*tasks)
@@ -65,17 +75,19 @@ async def check_open_ports(host, ports):
     return open_ports
 
 # Function to get SSL/TLS information
-def get_ssl_info(host, port=443):
+def get_ssl_info(host: str, port: int = 443) -> Optional[Dict[str, Union[str, tuple, bool]]]:
     try:
         context = ssl.create_default_context()
         conn = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=host)
-        conn.settimeout(5)
+        conn.settimeout(DEFAULT_HTTP_TIMEOUT)
         conn.connect((host, port))
         ssl_info = conn.getpeercert()
         cipher = conn.cipher()
         protocol_version = conn.version()
         # Get certificate details
         der_cert = conn.getpeercert(binary_form=True)
+        if der_cert is None:
+            return None
         cert = x509.load_der_x509_certificate(der_cert, default_backend())
 
         # Use the new properties that return aware datetime objects
@@ -104,21 +116,35 @@ def get_ssl_info(host, port=443):
         return None
 
 # Function to perform banner grabbing
-def grab_banner(host, port):
+def grab_banner(host: str, port: int) -> Optional[str]:
     try:
         with rate_limit:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
+            sock.settimeout(DEFAULT_BANNER_TIMEOUT)
             sock.connect((host, port))
             sock.sendall(b'HEAD / HTTP/1.1\r\nHost: %s\r\n\r\n' % host.encode())
             banner = sock.recv(1024).decode().strip()
             sock.close()
             return banner
-    except Exception as e:
+    except Exception as _:
         return None
 
+# Async wrapper for banner grabbing
+async def grab_banner_async(host: str, port: int) -> Optional[str]:
+    import concurrent.futures
+    loop = asyncio.get_running_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(pool, grab_banner, host, port),
+                timeout=DEFAULT_BANNER_TIMEOUT + 0.5
+            )
+            return result
+        except asyncio.TimeoutError:
+            return None
+
 # Function to check HTTP headers
-def check_http_headers(url):
+def check_http_headers(url: str) -> Tuple[Optional[requests.structures.CaseInsensitiveDict], Optional[int], Optional[List[requests.Response]]]:
     try:
         headers = {
             'User-Agent': (
@@ -130,7 +156,7 @@ def check_http_headers(url):
         response = requests.head(
             url,
             headers=headers,
-            timeout=5,
+            timeout=DEFAULT_HTTP_TIMEOUT,
             verify=False,
             allow_redirects=True
         )
@@ -140,17 +166,18 @@ def check_http_headers(url):
         return None, None, None
 
 # Function to detect WAF based on headers
-def detect_waf(headers, waf_indicators):
+def detect_waf(headers: Dict[str, str], waf_indicators: Dict[str, str]) -> List[str]:
     detected_wafs = []
-    for header, waf in waf_indicators.items():
-        if header.lower() in [h.lower() for h in headers]:
-            detected_wafs.append(waf)
+    header_keys = [h.lower() for h in headers.keys()]
+    for indicator_header, waf_name in waf_indicators.items():
+        if indicator_header.lower() in header_keys:
+            detected_wafs.append(waf_name)
     return detected_wafs
 
 # Function to get GeoIP information
-def get_geoip_info(ip):
+def get_geoip_info(ip: str) -> Optional[Dict[str, Union[str, float, None]]]:
     try:
-        response = requests.get(f'https://geolocation-db.com/json/{ip}&position=true').json()
+        response = requests.get(f'https://geolocation-db.com/json/{ip}&position=true', timeout=DEFAULT_HTTP_TIMEOUT).json()
         return {
             'country': response.get('country_name'),
             'state': response.get('state'),
@@ -163,7 +190,7 @@ def get_geoip_info(ip):
         return None
 
 # Main detection function
-async def detect_proxy(host, common_ports, proxy_indicators, waf_indicators):
+async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: List[str], waf_indicators: Dict[str, str]) -> Dict[str, Union[str, None, Dict[str, Any], List[Any]]]:
     results = {
         'host': host,
         'ip': None,
@@ -199,12 +226,20 @@ async def detect_proxy(host, common_ports, proxy_indicators, waf_indicators):
     results['open_ports'] = open_ports
     logging.info(f"Open ports: {open_ports}")
 
-    # Perform banner grabbing
-    for port in open_ports:
-        banner = grab_banner(host, port)
-        if banner:
-            results['banners'][port] = banner
-            logging.info(f"Banner for port {port}: {banner}")
+    # Perform banner grabbing (parallelized for performance)
+    if open_ports:
+        logging.info("Scanning banners...")
+        banner_tasks = [grab_banner_async(host, port) for port in open_ports]
+        try:
+            banners = await asyncio.gather(*banner_tasks, return_exceptions=True)
+            for port, banner in zip(open_ports, banners):
+                if banner and not isinstance(banner, Exception):
+                    results['banners'][int(port)] = banner
+                    logging.info(f"Banner for port {port}: {banner}")
+                elif isinstance(banner, Exception):
+                    logging.debug(f"Banner grab failed for port {port}: {banner}")
+        except Exception as e:
+            logging.warning(f"Error during banner grabbing: {e}")
 
     # Check SSL certificate (if port 443 is open)
     if 443 in open_ports:
