@@ -16,8 +16,8 @@ import urllib3
 import re
 import ipaddress
 import os
+from urllib.parse import quote
 from typing import Dict, List, Optional, Union, Tuple, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
@@ -27,8 +27,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-# Semaphore for rate limiting
-rate_limit = threading.Semaphore(5)  # Allows 5 concurrent connections
+# Global limiters. Updated in main() based on CLI flags.
+connection_sem = threading.Semaphore(5)  # concurrent connections (thread-safe)
+request_rate_limiter = None  # AdvancedRateLimiter instance (thread-safe)
 
 # Default configuration constants
 DEFAULT_CONCURRENT_CONNECTIONS: int = 5
@@ -52,26 +53,32 @@ def validate_hostname(hostname: str) -> bool:
     if not hostname or len(hostname) > 253:  # RFC 1035 limit
         return False
 
-    # Check for valid hostname format
-    if not VALID_HOSTNAME_REGEX.match(hostname):
+    host = hostname.strip()
+    if host.startswith('[') and host.endswith(']'):
+        # Accept bracketed IPv6 literals (common in URLs).
+        host = host[1:-1].strip()
+
+    # Block obvious local hostnames.
+    if host.lower() == "localhost":
         return False
 
-    # Prevent localhost/private addresses
-    private_hosts = ['localhost', '127.0.0.1', '::1']
-    if hostname.lower() in private_hosts:
-        return False
-
-    # Try to validate as IP if it looks like one
-    if VALID_IP_REGEX.match(hostname):
-        try:
-            ipaddress.ip_address(hostname)
-        except ValueError:
+    # If it's an IP literal (v4 or v6), validate it.
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_loopback:
             return False
+        return True
+    except ValueError:
+        pass
+
+    # Hostname validation: allow basic DNS-style hostnames.
+    if not VALID_HOSTNAME_REGEX.match(host):
+        return False
 
     # Additional validation for hostname format
     try:
         # Check if the hostname can be encoded properly
-        hostname.encode('idna').decode('utf-8')
+        host.encode('idna').decode('utf-8')
         return True
     except (UnicodeError, UnicodeDecodeError):
         return False
@@ -125,16 +132,21 @@ def validate_ports_list(ports_string: str) -> Tuple[bool, List[int]]:
     return True, ports
 
 def sanitize_file_path(file_path: str) -> Optional[str]:
-    """Sanitize file path to prevent directory traversal"""
+    """Resolve and validate a file path. Relative paths are restricted to the current working directory."""
     if not file_path or len(file_path) > VALID_FILE_PATH_MAX_LENGTH:
         return None
 
-    # Expand path and resolve any symbolic links
     try:
-        expanded = os.path.expanduser(file_path)
-        resolved = os.path.abspath(expanded)
-        # Check if path is still within acceptable bounds
-        if '..' in resolved or not resolved.startswith(os.getcwd() if not os.path.isabs(expanded) else '/'):
+        if "\x00" in file_path:
+            return None
+        expanded = os.path.expanduser(file_path.strip())
+        if os.path.isabs(expanded):
+            return os.path.abspath(expanded)
+
+        cwd = os.path.abspath(os.getcwd())
+        resolved = os.path.abspath(os.path.join(cwd, expanded))
+        # Prevent relative paths escaping the repo/cwd via "..".
+        if not (resolved == cwd or resolved.startswith(cwd + os.sep)):
             return None
         return resolved
     except (OSError, ValueError):
@@ -195,7 +207,12 @@ class AdvancedRateLimiter:
 def load_indicators(file_path: str) -> List[str]:
     try:
         with open(file_path, 'r') as f:
-            indicators = [line.strip() for line in f if line.strip()]
+            # Support comment lines in indicator files.
+            indicators = [
+                line.strip()
+                for line in f
+                if line.strip() and not line.lstrip().startswith('#')
+            ]
         return indicators
     except Exception as e:
         logging.error(f"Error loading indicators from {file_path}: {e}")
@@ -320,7 +337,9 @@ def load_waf_indicators(file_path: str) -> Dict[str, str]:
 # Function to check if a port is open (supports IPv4 and IPv6)
 async def is_port_open(host: str, port: int) -> bool:
     try:
-        for res in socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM):
+        loop = asyncio.get_running_loop()
+        addrinfos = await loop.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for res in addrinfos:
             af, socktype, proto, canonname, sa = res
             try:
                 coro = asyncio.open_connection(host=sa[0], port=sa[1], family=af)
@@ -336,23 +355,46 @@ async def is_port_open(host: str, port: int) -> bool:
         return False
 
 # Function to check open ports asynchronously
-async def check_open_ports(host: str, ports: List[int]) -> List[int]:
-    open_ports = []
-    tasks = [is_port_open(host, port) for port in ports]
-    results = await asyncio.gather(*tasks)
-    for port, is_open in zip(ports, results):
-        if is_open:
-            open_ports.append(port)
-    return open_ports
+async def check_open_ports(host: str, ports: List[int], max_concurrency: int = DEFAULT_CONCURRENT_CONNECTIONS) -> List[int]:
+    if not ports:
+        return []
+    max_concurrency = max(1, int(max_concurrency))
+
+    q: asyncio.Queue[Tuple[int, int]] = asyncio.Queue()
+    for idx, port in enumerate(ports):
+        q.put_nowait((idx, port))
+
+    results: List[bool] = [False] * len(ports)
+
+    async def worker() -> None:
+        while True:
+            try:
+                idx, port = q.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            try:
+                results[idx] = await is_port_open(host, port)
+            finally:
+                q.task_done()
+
+    workers = [asyncio.create_task(worker()) for _ in range(min(max_concurrency, len(ports)))]
+    await q.join()
+    for w in workers:
+        w.cancel()
+    await asyncio.gather(*workers, return_exceptions=True)
+
+    return [port for idx, port in enumerate(ports) if results[idx]]
 
 # Function to get SSL/TLS information
-def get_ssl_info(host: str, port: int = 443) -> Optional[Dict[str, Union[str, tuple, bool]]]:
+def get_ssl_info(host: str, port: int = 443, verify_ssl: bool = False) -> Optional[Dict[str, Union[str, tuple, bool]]]:
     try:
         context = ssl.create_default_context()
-        conn = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=host)
-        conn.settimeout(DEFAULT_HTTP_TIMEOUT)
-        conn.connect((host, port))
-        ssl_info = conn.getpeercert()
+        if not verify_ssl:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+
+        raw_sock = socket.create_connection((host, port), timeout=DEFAULT_HTTP_TIMEOUT)
+        conn = context.wrap_socket(raw_sock, server_hostname=host)
         cipher = conn.cipher()
         protocol_version = conn.version()
         # Get certificate details
@@ -367,7 +409,7 @@ def get_ssl_info(host: str, port: int = 443) -> Optional[Dict[str, Union[str, tu
 
         # Compare with current UTC time
         current_time = datetime.datetime.now(datetime.timezone.utc)
-        is_valid = not_after > current_time
+        is_valid = (not_before <= current_time) and (current_time < not_after)
 
         conn.close()
         return {
@@ -389,66 +431,94 @@ def get_ssl_info(host: str, port: int = 443) -> Optional[Dict[str, Union[str, tu
 # Function to perform banner grabbing
 def grab_banner(host: str, port: int) -> Optional[str]:
     try:
-        with rate_limit:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(DEFAULT_BANNER_TIMEOUT)
-            sock.connect((host, port))
-            sock.sendall(b'HEAD / HTTP/1.1\r\nHost: %s\r\n\r\n' % host.encode())
-            banner = sock.recv(1024).decode().strip()
-            sock.close()
-            return banner
+        # Apply rate limiting (requests per time window) and concurrency limiting.
+        if request_rate_limiter is not None:
+            with request_rate_limiter:
+                with connection_sem:
+                    sock = socket.create_connection((host, port), timeout=DEFAULT_BANNER_TIMEOUT)
+                    try:
+                        sock.sendall(b'HEAD / HTTP/1.1\r\nHost: %s\r\n\r\n' % host.encode())
+                        banner = sock.recv(1024).decode(errors="replace").strip()
+                        return banner
+                    finally:
+                        sock.close()
+
+        with connection_sem:
+            sock = socket.create_connection((host, port), timeout=DEFAULT_BANNER_TIMEOUT)
+            try:
+                sock.sendall(b'HEAD / HTTP/1.1\r\nHost: %s\r\n\r\n' % host.encode())
+                banner = sock.recv(1024).decode(errors="replace").strip()
+                return banner
+            finally:
+                sock.close()
     except Exception as _:
         return None
 
 # Async wrapper for banner grabbing
 async def grab_banner_async(host: str, port: int) -> Optional[str]:
-    import concurrent.futures
-    loop = asyncio.get_running_loop()
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(pool, grab_banner, host, port),
-                timeout=DEFAULT_BANNER_TIMEOUT + 0.5
-            )
-            return result
-        except asyncio.TimeoutError:
-            return None
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(grab_banner, host, port),
+            timeout=DEFAULT_BANNER_TIMEOUT + 0.5,
+        )
+    except asyncio.TimeoutError:
+        return None
 
 # Function to check HTTP headers
-def check_http_headers(url: str) -> Tuple[Optional[requests.structures.CaseInsensitiveDict], Optional[int], Optional[List[requests.Response]]]:
-    try:
-        headers = {
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/91.0.4472.124 Safari/537.36'
-            )
-        }
-        response = requests.head(
-            url,
-            headers=headers,
-            timeout=DEFAULT_HTTP_TIMEOUT,
-            verify=False,
-            allow_redirects=True
-        )
-        return response.headers, response.status_code, response.history
-    except requests.RequestException as e:
-        logging.error(f"Error checking {url}: {e}")
-        return None, None, None
+def check_http_headers(url: str, verify_ssl: bool = False) -> Tuple[Optional[requests.structures.CaseInsensitiveDict], Optional[int], Optional[List[requests.Response]]]:
+    # Backwards-compatible wrapper around secure_headers_check (historically verify=False).
+    return secure_headers_check(url, verify_ssl=verify_ssl)
 
 # Function to detect WAF based on headers
 def detect_waf(headers: Dict[str, str], waf_indicators: Dict[str, str]) -> List[str]:
-    detected_wafs = []
-    header_keys = [h.lower() for h in headers.keys()]
-    for indicator_header, waf_name in waf_indicators.items():
-        if indicator_header.lower() in header_keys:
-            detected_wafs.append(waf_name)
-    return detected_wafs
+    """
+    Detect WAFs by matching either:
+    - header-only indicators: "cf-ray" (present in response headers)
+    - header:value indicators: "server:cloudflare" (header present and value matches)
+    """
+    detected: set[str] = set()
+
+    # Normalize headers to a case-insensitive lookup.
+    normalized_headers: Dict[str, str] = {}
+    for k, v in (headers or {}).items():
+        # Requests headers are usually str->str, but keep this defensive.
+        if isinstance(v, (list, tuple)):
+            v_str = ", ".join(str(x) for x in v)
+        else:
+            v_str = str(v)
+        normalized_headers[str(k).lower()] = v_str
+
+    for indicator, waf_name in (waf_indicators or {}).items():
+        ind = str(indicator).strip().lower()
+        if not ind:
+            continue
+
+        # header:value style indicator
+        if ":" in ind:
+            header, expected = ind.split(":", 1)
+            header = header.strip()
+            expected = expected.strip()
+            if not header or not expected:
+                continue
+            actual = normalized_headers.get(header)
+            if actual is None:
+                continue
+            if expected in actual.lower():
+                detected.add(waf_name)
+            continue
+
+        # header-only indicator
+        if ind in normalized_headers:
+            detected.add(waf_name)
+
+    return sorted(detected)
 
 # Function to get GeoIP information
 def get_geoip_info(ip: str) -> Optional[Dict[str, Union[str, float, None]]]:
     try:
-        response = requests.get(f'https://geolocation-db.com/json/{ip}&position=true', timeout=DEFAULT_HTTP_TIMEOUT).json()
+        # Quote the IP so IPv6 literals don't break the path.
+        url = f'https://geolocation-db.com/json/{quote(ip, safe="")}&position=true'
+        response = requests.get(url, timeout=DEFAULT_HTTP_TIMEOUT).json()
         return {
             'country': response.get('country_name'),
             'state': response.get('state'),
@@ -460,8 +530,30 @@ def get_geoip_info(ip: str) -> Optional[Dict[str, Union[str, float, None]]]:
         logging.error(f"Error getting GeoIP info: {e}")
         return None
 
+# Resolve a hostname to an IP for reporting/GeoIP. Prefers IPv4 when available.
+def resolve_ip(host: str) -> str:
+    try:
+        return socket.gethostbyname(host)
+    except socket.gaierror:
+        infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if not infos:
+            raise
+        # Prefer IPv4 for better GeoIP API compatibility.
+        for info in infos:
+            sa = info[4]
+            if info[0] == socket.AF_INET:
+                return sa[0]
+        return infos[0][4][0]
+
 # Main detection function
-async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: List[str], waf_indicators: Dict[str, str], verify_ssl: bool = False) -> Dict[str, Union[str, None, Dict[str, Any], List[Any]]]:
+async def detect_proxy(
+    host: str,
+    common_ports: List[int],
+    proxy_indicators: List[str],
+    waf_indicators: Dict[str, str],
+    verify_ssl: bool = False,
+    max_concurrency: int = DEFAULT_CONCURRENT_CONNECTIONS,
+) -> Dict[str, Union[str, None, Dict[str, Any], List[Any]]]:
     results = {
         'host': host,
         'ip': None,
@@ -479,7 +571,7 @@ async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: Lis
     logging.info(f"Analyzing {host}...")
 
     try:
-        ip = socket.gethostbyname(host)
+        ip = resolve_ip(host)
         results['ip'] = ip
         logging.info(f"Resolved {host} to IP: {ip}")
     except socket.gaierror as e:
@@ -493,7 +585,7 @@ async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: Lis
         logging.info(f"Geolocation info: {geoip_info}")
 
     # Check open ports
-    open_ports = await check_open_ports(ip, common_ports)
+    open_ports = await check_open_ports(ip, common_ports, max_concurrency=max_concurrency)
     results['open_ports'] = open_ports
     logging.info(f"Open ports: {open_ports}")
 
@@ -514,7 +606,7 @@ async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: Lis
 
     # Check SSL certificate (if port 443 is open)
     if 443 in open_ports:
-        cert = get_ssl_info(host)
+        cert = get_ssl_info(host, verify_ssl=verify_ssl)
         if cert:
             results['ssl_info'] = cert
             logging.info("SSL certificate information:")
@@ -553,16 +645,14 @@ async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: Lis
         logging.info(" -> ".join([r.url for r in https_history]))
 
     # Detect proxy indicators
-    found_indicators = []
     combined_headers = {}
     if http_headers:
         combined_headers.update(http_headers)
     if https_headers:
         combined_headers.update(https_headers)
 
-    for header in proxy_indicators:
-        if header.lower() in [h.lower() for h in combined_headers]:
-            found_indicators.append(header)
+    combined_header_keys = {str(h).lower() for h in combined_headers.keys()}
+    found_indicators = [h for h in proxy_indicators if h.lower() in combined_header_keys]
 
     results['proxy_indicators'] = found_indicators
     if found_indicators:
@@ -573,7 +663,7 @@ async def detect_proxy(host: str, common_ports: List[int], proxy_indicators: Lis
     # Detect WAF
     waf_http = detect_waf(http_headers or {}, waf_indicators)
     waf_https = detect_waf(https_headers or {}, waf_indicators)
-    results['waf_detected'] = list(set(waf_http + waf_https))
+    results['waf_detected'] = sorted(set(waf_http + waf_https))
     if results['waf_detected']:
         logging.info(f"\nWAF detected: {', '.join(results['waf_detected'])}")
     else:
@@ -637,6 +727,12 @@ def main():
             logging.error(f"Invalid file path: {args.target_file}")
             return
         args.target_file = sanitized_path
+    if args.file:
+        sanitized_output = sanitize_file_path(args.file)
+        if not sanitized_output:
+            logging.error(f"Invalid output file path: {args.file}")
+            return
+        args.file = sanitized_output
 
     # Validate ports if provided
     if args.ports:
@@ -653,10 +749,11 @@ def main():
         logging.error("Rate limit must be between 1 and 100")
         return
 
-    global rate_limit
-    rate_limit = AdvancedRateLimiter(
+    global connection_sem, request_rate_limiter
+    connection_sem = threading.Semaphore(args.rate_limit)
+    request_rate_limiter = AdvancedRateLimiter(
         max_requests=args.rate_limit,
-        time_window=args.rate_window
+        time_window=args.rate_window,
     )
 
     # Load indicators
@@ -690,15 +787,22 @@ def main():
         targets = [args.target]
 
     start_time = time.time()
-    all_results = []
+    async def run_all() -> List[Dict[str, Union[str, None, Dict[str, Any], List[Any]]]]:
+        out = []
+        for target in targets:
+            out.append(
+                await detect_proxy(
+                    target,
+                    common_ports,
+                    proxy_indicators,
+                    waf_indicators,
+                    verify_ssl=args.verify_ssl,
+                    max_concurrency=args.rate_limit,
+                )
+            )
+        return out
 
-    # Run detection for each target
-    for target in targets:
-        loop = asyncio.get_event_loop()
-        results = loop.run_until_complete(
-            detect_proxy(target, common_ports, proxy_indicators, waf_indicators, args.verify_ssl)
-        )
-        all_results.append(results)
+    all_results = asyncio.run(run_all())
 
     end_time = time.time()
 
@@ -718,10 +822,15 @@ def main():
         else:
             csvfile = sys.stdout
 
+        def csv_value(v: Any) -> Any:
+            if isinstance(v, (dict, list)):
+                return json.dumps(v, ensure_ascii=True)
+            return v
+
         writer = csv.DictWriter(csvfile, fieldnames=keys)
         writer.writeheader()
         for result in all_results:
-            writer.writerow(result)
+            writer.writerow({k: csv_value(result.get(k)) for k in keys})
         if args.file:
             csvfile.close()
             logging.info(f"\nResults saved to {args.file}")

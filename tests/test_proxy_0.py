@@ -2,8 +2,18 @@ import pytest
 import asyncio
 import socket
 import datetime
+import tempfile
+import os
 from unittest.mock import patch, MagicMock
-from testproxy import check_open_ports, get_ssl_info, check_http_headers, detect_waf, detect_proxy
+from unittest.mock import call
+from testproxy import (
+    check_open_ports,
+    get_ssl_info,
+    check_http_headers,
+    detect_waf,
+    detect_proxy,
+    load_indicators,
+)
 
 # Mock host to use in tests
 MOCK_HOST = 'example.com'
@@ -12,18 +22,20 @@ MOCK_HOST = 'example.com'
 async def test_check_open_ports():
     ports = [80, 443, 8080]
 
-    # Mock is_port_open function directly to return False, True, False for each port
-    async def mock_is_port_open(host, port):
-        return port == 443  # Only port 443 succeeds
+    async def side_effect(host, port):
+        return port == 443
 
-    with patch.object(asyncio, 'open_connection', side_effect=ConnectionRefusedError), \
-         patch('testproxy.is_port_open', side_effect=[False, True, False]) as mock_ip:
-
-        open_ports = await check_open_ports(MOCK_HOST, ports)
-        # The check_open_ports function calls is_port_open for each port
-        # and collects results, so it should return [443] if is_port_open returns True only for port 443
-        mock_ip.assert_has_calls([((MOCK_HOST, 80),), ((MOCK_HOST, 443),), ((MOCK_HOST, 8080),)])
+    with patch('testproxy.is_port_open', side_effect=side_effect) as mock_ip:
+        open_ports = await check_open_ports(MOCK_HOST, ports, max_concurrency=2)
         assert open_ports == [443]
+        mock_ip.assert_has_awaits(
+            [
+                call(MOCK_HOST, 80),
+                call(MOCK_HOST, 443),
+                call(MOCK_HOST, 8080),
+            ],
+            any_order=True,
+        )
 
 def test_get_ssl_info():
     # Create mock datetime objects with timezone info
@@ -48,6 +60,7 @@ def test_get_ssl_info():
     mock_sock.getpeercert.return_value = b'mock certificate bytes'
     mock_sock.cipher.return_value = ('TLS_AES_256_GCM_SHA384', 'TLSv1.3', 'ECDHE_RSA_WITH_AES_256_GCM_SHA384')
     mock_sock.version.return_value = 'TLSv1.3'
+    mock_socket_ctx.wrap_socket.return_value = mock_sock
 
     with patch('ssl.create_default_context', return_value=mock_socket_ctx), \
          patch('socket.create_connection', return_value=mock_sock), \
@@ -102,7 +115,8 @@ def test_detect_waf():
 
     headers_with_waf = {
         'X-WAF-Rate-Limit': '100',
-        'cf-ray': '12345678901234567-IAD'
+        'cf-ray': '12345678901234567-IAD',
+        'Server': 'cloudflare'
     }
     detected_wafs = detect_waf(headers_with_waf, waf_indicators)
     assert 'Generic WAF' in detected_wafs
@@ -114,6 +128,18 @@ def test_detect_waf():
     }
     detected_wafs = detect_waf(headers_without_waf, waf_indicators)
     assert len(detected_wafs) == 0
+
+def test_load_indicators_skips_comments():
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "indicators.txt")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("# comment line\n")
+            f.write("X-Forwarded-For\n")
+            f.write("\n")
+            f.write("  # another comment\n")
+            f.write("Via\n")
+        indicators = load_indicators(p)
+        assert indicators == ["X-Forwarded-For", "Via"]
 
 @pytest.mark.asyncio
 async def test_detect_proxy():
